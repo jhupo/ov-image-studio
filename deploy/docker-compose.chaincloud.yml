@@ -1,0 +1,62 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: chaincloud-image-studio:local
+    container_name: chaincloud-image-studio
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DEFAULT_IMAGE_API_URL: http://192.168.2.60:8080/v1
+      DEFAULT_API_URL: http://192.168.2.60:8080/v1
+      ENABLE_API_PROXY: "false"
+      IMAGE_STUDIO_PORT: "8787"
+      POSTGRES_DSN: postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio
+      REDIS_URL: redis://redis:6379/0
+      IMAGE_STUDIO_WORKER_COUNT: "2"
+      IMAGE_STUDIO_MAX_CONCURRENT: "4"
+      IMAGE_STUDIO_MAX_CONCURRENT_PER_USER: "2"
+      IMAGE_STUDIO_MAX_CONCURRENT_PER_KEY: "2"
+      IMAGE_STUDIO_MAX_CONCURRENT_PER_PROFILE: "2"
+      IMAGE_STUDIO_PAYLOAD_TTL_SECONDS: "86400"
+      IMAGE_STUDIO_RESULT_TTL_SECONDS: "86400"
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: chaincloud-image-studio-postgres
+    environment:
+      POSTGRES_USER: chaincloud
+      POSTGRES_PASSWORD: chaincloud
+      POSTGRES_DB: chaincloud_image_studio
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chaincloud -d chaincloud_image_studio"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: chaincloud-image-studio-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
