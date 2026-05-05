@@ -27,8 +27,12 @@ DELAYED_QUEUE_KEY = os.environ.get("IMAGE_STUDIO_DELAYED_QUEUE_KEY", "chaincloud
 CONCURRENCY_PREFIX = os.environ.get("IMAGE_STUDIO_CONCURRENCY_PREFIX", "chaincloud:image_tasks:concurrency")
 PAYLOAD_KEY_PREFIX = os.environ.get("IMAGE_STUDIO_PAYLOAD_KEY_PREFIX", "chaincloud:image_tasks:payload")
 RESULT_KEY_PREFIX = os.environ.get("IMAGE_STUDIO_RESULT_KEY_PREFIX", "chaincloud:image_tasks:result")
+CANCEL_KEY_PREFIX = os.environ.get("IMAGE_STUDIO_CANCEL_KEY_PREFIX", "chaincloud:image_tasks:cancel")
 PAYLOAD_TTL_SECONDS = int(os.environ.get("IMAGE_STUDIO_PAYLOAD_TTL_SECONDS", "86400"))
 RESULT_TTL_SECONDS = int(os.environ.get("IMAGE_STUDIO_RESULT_TTL_SECONDS", "86400"))
+CANCEL_TTL_SECONDS = int(os.environ.get("IMAGE_STUDIO_CANCEL_TTL_SECONDS", "3600"))
+TASK_METADATA_TTL_SECONDS = int(os.environ.get("IMAGE_STUDIO_TASK_METADATA_TTL_SECONDS", str(7 * 86400)))
+CLEANUP_INTERVAL_SECONDS = int(os.environ.get("IMAGE_STUDIO_CLEANUP_INTERVAL_SECONDS", "3600"))
 REBUILD_QUEUE_ON_START = os.environ.get("IMAGE_STUDIO_REBUILD_QUEUE_ON_START", "true").lower() in {"1", "true", "yes"}
 
 TERMINAL_STATES = {"succeeded", "failed", "canceled"}

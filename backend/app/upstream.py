@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+from .cancellation import is_task_cancelled, register_cancel_callback, unregister_cancel_callback
 from .config import DEFAULT_IMAGE_API_URL, TASK_TIMEOUT_SECONDS
 from .fingerprints import build_api_url, resolve_images_base_url
 
@@ -18,6 +19,40 @@ class TaskExecutionError(Exception):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+
+
+def task_id_from_payload(payload: dict[str, Any]) -> str | None:
+    task_id = payload.get("_taskId")
+    return str(task_id) if task_id else None
+
+
+def raise_if_cancelled(task_id: str | None) -> None:
+    if task_id and is_task_cancelled(task_id):
+        raise TaskExecutionError("USER_CANCELED", "Task canceled by requester", False)
+
+
+def request_with_cancellation(
+    task_id: str | None,
+    method: str,
+    url: str,
+    **kwargs: Any,
+) -> requests.Response:
+    raise_if_cancelled(task_id)
+    session = requests.Session()
+
+    def close_session() -> None:
+        session.close()
+
+    if task_id:
+        register_cancel_callback(task_id, close_session)
+    try:
+        response = session.request(method, url, **kwargs)
+        raise_if_cancelled(task_id)
+        return response
+    finally:
+        if task_id:
+            unregister_cancel_callback(task_id, close_session)
+        session.close()
 
 
 def data_url_to_bytes(data_url: str) -> tuple[bytes, str]:
@@ -34,9 +69,9 @@ def normalize_base64_image(raw: str, mime_type: str) -> str:
     return raw if raw.startswith("data:") else f"data:{mime_type};base64,{raw}"
 
 
-def fetch_image_url_as_data_url(url: str, fallback_mime: str) -> str:
+def fetch_image_url_as_data_url(url: str, fallback_mime: str, task_id: str | None = None) -> str:
     try:
-        response = requests.get(url, timeout=120)
+        response = request_with_cancellation(task_id, "GET", url, timeout=120)
         response.raise_for_status()
     except requests.Timeout as exc:
         raise TaskExecutionError("IMAGE_DOWNLOAD_TIMEOUT", "Image download timed out", True) from exc
@@ -101,6 +136,7 @@ def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
     profile = payload["profile"]
     params = payload["params"]
     output_count = max(1, int(params.get("n", 1) or 1))
+    raise_if_cancelled(task_id_from_payload(payload))
     try:
         if profile.get("apiMode") != "responses" and profile.get("codexCli") and output_count > 1:
             return call_openai_images_task_concurrent(payload, output_count)
@@ -163,6 +199,7 @@ def call_openai_task_single(payload: dict[str, Any]) -> dict[str, Any]:
     input_images = payload.get("inputImageDataUrls") or []
     mask_data_url = payload.get("maskDataUrl")
     timeout = min(TASK_TIMEOUT_SECONDS, max(10, int(profile.get("timeout", TASK_TIMEOUT_SECONDS))))
+    task_id = task_id_from_payload(payload)
     fallback_mime = f"image/{'jpeg' if params['output_format'] == 'jpeg' else params['output_format']}"
     headers = {
         "Authorization": f"Bearer {profile['apiKey']}",
@@ -171,6 +208,7 @@ def call_openai_task_single(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
     try:
+        raise_if_cancelled(task_id)
         if profile.get("apiMode") == "responses":
             protected_prompt = add_prompt_guard(prompt)
             body: dict[str, Any] = {
@@ -205,7 +243,9 @@ def call_openai_task_single(payload: dict[str, Any]) -> dict[str, Any]:
                 ],
                 "tool_choice": "required",
             }
-            response = requests.post(
+            response = request_with_cancellation(
+                task_id,
+                "POST",
                 build_api_url(DEFAULT_IMAGE_API_URL, "responses"),
                 headers={**headers, "Content-Type": "application/json"},
                 json=body,
@@ -256,7 +296,9 @@ def call_openai_task_single(payload: dict[str, Any]) -> dict[str, Any]:
                 form_data["output_compression"] = str(params["output_compression"])
             if params.get("n", 1) > 1:
                 form_data["n"] = str(params["n"])
-            response = requests.post(
+            response = request_with_cancellation(
+                task_id,
+                "POST",
                 build_api_url(images_base, "images/edits"),
                 headers=headers,
                 data=form_data,
@@ -278,7 +320,9 @@ def call_openai_task_single(payload: dict[str, Any]) -> dict[str, Any]:
                 ),
                 **({"n": params["n"]} if params.get("n", 1) > 1 else {}),
             }
-            response = requests.post(
+            response = request_with_cancellation(
+                task_id,
+                "POST",
                 build_api_url(images_base, "images/generations"),
                 headers={**headers, "Content-Type": "application/json"},
                 json=body,
@@ -299,7 +343,7 @@ def call_openai_task_single(payload: dict[str, Any]) -> dict[str, Any]:
             images.append(normalize_base64_image(item["b64_json"], fallback_mime))
             revised_prompts.append(item.get("revised_prompt"))
         elif item.get("url"):
-            images.append(fetch_image_url_as_data_url(item["url"], fallback_mime))
+            images.append(fetch_image_url_as_data_url(item["url"], fallback_mime, task_id))
             revised_prompts.append(item.get("revised_prompt"))
     if not images:
         raise TaskExecutionError("UPSTREAM_EMPTY_RESULT", "No usable image payload returned", False)

@@ -92,12 +92,32 @@ export type TaskStatus = 'running' | 'done' | 'error'
 
 export interface TaskRecord {
   id: string
+  submissionKey?: string | null
+  backendIdempotencyKey?: string | null
   backendTaskId?: string | null
   backendStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | null
   backendQueuePosition?: number | null
+  backendQueuePositions?: {
+    global?: number | null
+    user?: number | null
+    apiKey?: number | null
+    profile?: number | null
+  } | null
   backendRetryCount?: number | null
   backendMaxRetries?: number | null
   backendErrorCode?: string | null
+  backendErrorCategory?: string | null
+  backendQueuedAt?: number | null
+  backendAvailableAt?: number | null
+  backendStartedAt?: number | null
+  backendFinishedAt?: number | null
+  backendPhase?: string | null
+  backendPhaseStartedAt?: number | null
+  backendQueuedMs?: number | null
+  backendRunningMs?: number | null
+  backendTotalMs?: number | null
+  backendPayloadTtlSeconds?: number | null
+  backendResultTtlSeconds?: number | null
   prompt: string
   params: TaskParams
   /** 生成时使用的 Provider 类型 */

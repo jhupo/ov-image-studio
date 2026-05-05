@@ -40,7 +40,6 @@ COPY --from=build /app/dist /usr/share/nginx/html
 COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
 COPY deploy/migrate-api-env.envsh /docker-entrypoint.d/05-migrate-api-env.envsh
 COPY deploy/inject-api-url.sh /docker-entrypoint.d/40-inject-api-url.sh
-COPY backend /opt/app/backend
 COPY requirements.txt /opt/app/requirements.txt
 RUN http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" no_proxy="$NO_PROXY" \
     HTTP_PROXY="$HTTP_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
@@ -48,6 +47,7 @@ RUN http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" no_proxy="$NO_PROXY" \
     && http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" no_proxy="$NO_PROXY" \
        HTTP_PROXY="$HTTP_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
        python3 -m pip install --break-system-packages --no-cache-dir -r /opt/app/requirements.txt
+COPY backend /opt/app/backend
 RUN chmod +x /docker-entrypoint.d/05-migrate-api-env.envsh /docker-entrypoint.d/40-inject-api-url.sh \
     && sed -i 's/\r$//' /docker-entrypoint.d/05-migrate-api-env.envsh /docker-entrypoint.d/40-inject-api-url.sh /etc/nginx/templates/default.conf.template
 

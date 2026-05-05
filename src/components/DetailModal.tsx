@@ -5,6 +5,7 @@ import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
+import { formatBackendPhase, formatBackendStatus, formatDurationMs, formatDurationSeconds, formatErrorCategory, formatQueueScopePositions, getReadableTaskError, shortTaskId } from '../lib/taskDisplay'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -170,6 +171,8 @@ export default function DetailModal() {
   const taskModel = task.apiModel || '未知'
   const showSourceInfo = Boolean(task.apiProvider || task.apiProfileName || task.apiModel)
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
+  const readableError = getReadableTaskError(task)
+  const scopedQueueLabels = formatQueueScopePositions(task.backendQueuePositions)
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -221,7 +224,7 @@ export default function DetailModal() {
   }
 
   const handleCopyError = async () => {
-    const errorText = task.error || '生成失败'
+    const errorText = readableError
     try {
       await copyTextToClipboard(errorText)
       showToast('完整报错已复制', 'success')
@@ -405,7 +408,7 @@ export default function DetailModal() {
                   WebkitLineClamp: 4,
                 }}
               >
-                {task.error || '生成失败'}
+                {readableError}
               </p>
               <div className="mt-3 flex items-center justify-center gap-2">
                 <button
@@ -555,20 +558,28 @@ export default function DetailModal() {
             {task.backendTaskId && (
               <div className="mb-2 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
                 <span className="text-gray-400 dark:text-gray-500">后端任务</span>
-                <br />
-                <span className="font-medium text-gray-700 dark:text-gray-200">
-                  {task.backendStatus === 'queued'
-                    ? task.backendQueuePosition
-                      ? `排队 #${task.backendQueuePosition}`
-                      : '排队中'
-                    : task.backendStatus || 'running'}
-                </span>
-                {task.backendRetryCount != null && task.backendMaxRetries != null && (
-                  <span className="text-gray-400 dark:text-gray-500"> · 重试 {task.backendRetryCount}/{task.backendMaxRetries}</span>
-                )}
-                {task.backendErrorCode && (
-                  <span className="text-gray-400 dark:text-gray-500"> · {task.backendErrorCode}</span>
-                )}
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-mono text-gray-700 dark:text-gray-200">{shortTaskId(task.backendTaskId)}</span>
+                  <span className="font-medium text-gray-700 dark:text-gray-200">
+                    {formatBackendPhase(task.backendPhase) || formatBackendStatus(task.backendStatus)}
+                    {task.backendQueuePosition ? ` #${task.backendQueuePosition}` : ''}
+                  </span>
+                  {task.backendRetryCount != null && task.backendMaxRetries != null && (
+                    <span className="text-gray-400 dark:text-gray-500">重试 {task.backendRetryCount}/{task.backendMaxRetries}</span>
+                  )}
+                  {task.backendTotalMs != null && (
+                    <span className="text-gray-400 dark:text-gray-500">总耗时 {formatDurationMs(task.backendTotalMs)}</span>
+                  )}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-gray-400 dark:text-gray-500">
+                  {scopedQueueLabels.map((label) => <span key={label}>{label}</span>)}
+                  {task.backendQueuedMs != null && <span>排队 {formatDurationMs(task.backendQueuedMs)}</span>}
+                  {task.backendRunningMs != null && <span>运行 {formatDurationMs(task.backendRunningMs)}</span>}
+                  {task.backendPayloadTtlSeconds != null && <span>输入缓存 {formatDurationSeconds(task.backendPayloadTtlSeconds)}</span>}
+                  {task.backendResultTtlSeconds != null && <span>结果缓存 {formatDurationSeconds(task.backendResultTtlSeconds)}</span>}
+                  {task.backendErrorCategory && <span>{formatErrorCategory(task.backendErrorCategory)}</span>}
+                  {task.backendErrorCode && <span>{task.backendErrorCode}</span>}
+                </div>
               </div>
             )}
             <div className="grid grid-cols-2 gap-2 text-xs mb-4">

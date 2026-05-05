@@ -25,7 +25,7 @@ import {
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { getFalErrorMessage, getFalQueuedImageResult, getFalQueueStatus } from './lib/falAiImageApi'
-import { cancelImageTask, createImageTask, getImageTask } from './lib/taskApi'
+import { cancelImageTask, createImageTask, getImageTask, retryImageTask, type ImageTask } from './lib/taskApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
@@ -40,9 +40,62 @@ const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const localTaskPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const OPENAI_INTERRUPTED_ERROR = '请求中断'
+const SUBMISSION_DEDUP_WINDOW_MS = 5 * 60_000
+const submissionLocks = new Map<string, { taskId: string; idempotencyKey: string; expiresAt: number }>()
 
 function createOpenAITimeoutError(timeoutSeconds: number) {
   return `请求超时：超过 ${timeoutSeconds} 秒仍未完成，请稍后重试或提高超时时间。`
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function hashText(value: string): string {
+  let h1 = 0x811c9dc5
+  let h2 = 0x01000193
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    h1 ^= code
+    h1 = Math.imul(h1, 0x01000193)
+    h2 ^= code
+    h2 = Math.imul(h2, 0x27d4eb2d)
+  }
+  return `${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`
+}
+
+function createSubmissionKey(input: {
+  prompt: string
+  params: TaskParams
+  profile: ReturnType<typeof getActiveApiProfile>
+  inputImageIds: string[]
+  maskTargetImageId: string | null
+  maskDataUrl?: string | null
+}) {
+  return hashText(stableStringify({
+    prompt: input.prompt.trim(),
+    params: input.params,
+    provider: input.profile.provider,
+    model: input.profile.model,
+    apiMode: input.profile.apiMode,
+    apiKeyHash: hashText(input.profile.apiKey.trim()),
+    inputImageIds: input.inputImageIds,
+    maskTargetImageId: input.maskTargetImageId,
+    maskHash: input.maskDataUrl ? hashText(input.maskDataUrl) : '',
+  }))
+}
+
+function clearExpiredSubmissionLocks(now = Date.now()) {
+  for (const [key, lock] of submissionLocks.entries()) {
+    if (lock.expiresAt <= now) submissionLocks.delete(key)
+  }
 }
 
 export function getCachedImage(id: string): string | undefined {
@@ -377,6 +430,29 @@ function clearLocalTaskPollTimer(taskId: string) {
   localTaskPollTimers.delete(taskId)
 }
 
+function backendTaskPatch(remoteTask: ImageTask): Partial<TaskRecord> {
+  return {
+    backendStatus: remoteTask.status,
+    backendQueuePosition: remoteTask.queuePosition,
+    backendQueuePositions: remoteTask.queuePositions ?? null,
+    backendRetryCount: remoteTask.retryCount ?? null,
+    backendMaxRetries: remoteTask.maxRetries ?? null,
+    backendErrorCode: remoteTask.errorCode ?? null,
+    backendErrorCategory: remoteTask.errorCategory ?? null,
+    backendQueuedAt: remoteTask.queuedAt ?? null,
+    backendAvailableAt: remoteTask.availableAt ?? null,
+    backendStartedAt: remoteTask.startedAt ?? null,
+    backendFinishedAt: remoteTask.finishedAt ?? null,
+    backendPhase: remoteTask.phase ?? null,
+    backendPhaseStartedAt: remoteTask.phaseStartedAt ?? null,
+    backendQueuedMs: remoteTask.queuedMs ?? null,
+    backendRunningMs: remoteTask.runningMs ?? null,
+    backendTotalMs: remoteTask.totalMs ?? null,
+    backendPayloadTtlSeconds: remoteTask.payloadTtlSeconds ?? null,
+    backendResultTtlSeconds: remoteTask.resultTtlSeconds ?? null,
+  }
+}
+
 function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.now()) {
   const task = useStore.getState().tasks.find((item) => item.id === taskId)
   if (!task || !isRunningOpenAITask(task)) return false
@@ -538,12 +614,8 @@ async function applyLocalBackendTaskState(taskId: string) {
   const remoteTask = await getImageTask(localTask.backendTaskId)
   if (remoteTask.status === 'queued' || remoteTask.status === 'running') {
     updateTaskInStore(taskId, {
+      ...backendTaskPatch(remoteTask),
       status: 'running',
-      backendStatus: remoteTask.status,
-      backendQueuePosition: remoteTask.queuePosition,
-      backendRetryCount: remoteTask.retryCount ?? null,
-      backendMaxRetries: remoteTask.maxRetries ?? null,
-      backendErrorCode: remoteTask.errorCode ?? null,
       error: null,
       finishedAt: null,
       elapsed: null,
@@ -571,12 +643,9 @@ async function applyLocalBackendTaskState(taskId: string) {
     }, {})
 
     updateTaskInStore(taskId, {
+      ...backendTaskPatch(remoteTask),
       status: 'done',
-      backendStatus: remoteTask.status,
       backendQueuePosition: null,
-      backendRetryCount: remoteTask.retryCount ?? null,
-      backendMaxRetries: remoteTask.maxRetries ?? null,
-      backendErrorCode: remoteTask.errorCode ?? null,
       outputImages: outputIds,
       actualParams: remoteTask.result.actualParams ? { ...remoteTask.result.actualParams, n: outputIds.length } : undefined,
       actualParamsByImage: actualParamsByImage && Object.keys(actualParamsByImage).length > 0 ? actualParamsByImage : undefined,
@@ -591,12 +660,9 @@ async function applyLocalBackendTaskState(taskId: string) {
   }
 
   updateTaskInStore(taskId, {
+    ...backendTaskPatch(remoteTask),
     status: 'error',
-    backendStatus: remoteTask.status,
     backendQueuePosition: null,
-    backendRetryCount: remoteTask.retryCount ?? null,
-    backendMaxRetries: remoteTask.maxRetries ?? null,
-    backendErrorCode: remoteTask.errorCode ?? null,
     error: remoteTask.status === 'succeeded'
       ? '任务结果图片已过期，请从本地记录重试生成'
       : remoteTask.error || '本地任务执行失败',
@@ -653,15 +719,11 @@ async function executeTaskViaLocalBackend(taskId: string) {
     profile: activeProfile,
     inputImageDataUrls,
     maskDataUrl: maskDataUrl || undefined,
-  })
+  }, task.backendIdempotencyKey ?? taskId)
 
   updateTaskInStore(taskId, {
+    ...backendTaskPatch(remoteTask),
     backendTaskId: remoteTask.id,
-    backendStatus: remoteTask.status,
-    backendQueuePosition: remoteTask.queuePosition,
-    backendRetryCount: remoteTask.retryCount ?? null,
-    backendMaxRetries: remoteTask.maxRetries ?? null,
-    backendErrorCode: remoteTask.errorCode ?? null,
     status: 'running',
     error: null,
   })
@@ -673,11 +735,9 @@ export async function cancelBackendTask(task: TaskRecord) {
   try {
     const remoteTask = await cancelImageTask(task.backendTaskId)
     updateTaskInStore(task.id, {
+      ...backendTaskPatch(remoteTask),
       status: 'error',
-      backendStatus: remoteTask.status,
       backendQueuePosition: null,
-      backendRetryCount: remoteTask.retryCount ?? null,
-      backendMaxRetries: remoteTask.maxRetries ?? null,
       backendErrorCode: remoteTask.errorCode ?? 'USER_CANCELED',
       error: remoteTask.error || '任务已取消',
       finishedAt: remoteTask.finishedAt ?? Date.now(),
@@ -757,6 +817,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     return
   }
 
+  const normalizedParams = normalizeParamsForSettings(params, settings)
   let orderedInputImages = inputImages
   let maskImageId: string | null = null
   let maskTargetImageId: string | null = null
@@ -789,20 +850,56 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     }
   }
 
+  const submissionKey = createSubmissionKey({
+    prompt,
+    params: normalizedParams,
+    profile: activeProfile,
+    inputImageIds: orderedInputImages.map((image) => image.id),
+    maskTargetImageId,
+    maskDataUrl: maskDraft?.maskDataUrl ?? null,
+  })
+  const now = Date.now()
+  clearExpiredSubmissionLocks(now)
+  const lockedSubmission = submissionLocks.get(submissionKey)
+  if (lockedSubmission) {
+    useStore.getState().setDetailTaskId(lockedSubmission.taskId)
+    showToast('相同任务正在提交中，已为你定位到已有任务', 'info')
+    return
+  }
+  const runningDuplicate = useStore.getState().tasks.find((task) =>
+    task.status === 'running' &&
+    task.submissionKey === submissionKey &&
+    now - task.createdAt < SUBMISSION_DEDUP_WINDOW_MS
+  )
+  if (runningDuplicate) {
+    useStore.getState().setDetailTaskId(runningDuplicate.id)
+    showToast('相同任务仍在运行中，已为你定位到已有任务', 'info')
+    return
+  }
+
+  const taskId = genId()
+  const submissionWindow = Math.floor(now / SUBMISSION_DEDUP_WINDOW_MS)
+  const backendIdempotencyKey = `image-studio-${submissionKey}-${submissionWindow}`
+  submissionLocks.set(submissionKey, {
+    taskId,
+    idempotencyKey: backendIdempotencyKey,
+    expiresAt: now + SUBMISSION_DEDUP_WINDOW_MS,
+  })
+
   // 持久化输入图片到 IndexedDB（此前只在内存缓存中）
   for (const img of orderedInputImages) {
     await storeImage(img.dataUrl)
   }
 
-  const normalizedParams = normalizeParamsForSettings(params, settings)
   const normalizedParamPatch = getChangedParams(params, normalizedParams)
   if (Object.keys(normalizedParamPatch).length) {
     useStore.getState().setParams(normalizedParamPatch)
   }
 
-  const taskId = genId()
   const task: TaskRecord = {
     id: taskId,
+    submissionKey,
+    backendIdempotencyKey,
     prompt: prompt.trim(),
     params: normalizedParams,
     apiProvider: activeProfile.provider,
@@ -982,11 +1079,48 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   )
   setTasks(updated)
   const task = updated.find((t) => t.id === taskId)
-  if (task) putTask(task)
+  if (task) {
+    if (task.submissionKey && task.status !== 'running') {
+      const lock = submissionLocks.get(task.submissionKey)
+      if (lock?.taskId === task.id) submissionLocks.delete(task.submissionKey)
+    }
+    putTask(task)
+  }
 }
 
-/** 重试失败的任务：创建新任务并执行 */
+async function retryExistingBackendTask(task: TaskRecord) {
+  if (!task.backendTaskId || task.apiProvider !== 'openai') return false
+  try {
+    const remoteTask = await retryImageTask(task.backendTaskId)
+    updateTaskInStore(task.id, {
+      ...backendTaskPatch(remoteTask),
+      status: 'running',
+      outputImages: [],
+      actualParams: undefined,
+      actualParamsByImage: undefined,
+      revisedPromptByImage: undefined,
+      error: null,
+      falRecoverable: false,
+      finishedAt: null,
+      elapsed: null,
+    })
+    scheduleLocalTaskPoll(task.id, 300)
+    useStore.getState().showToast('任务已重新排队', 'success')
+    return true
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/expired|过期|PAYLOAD_EXPIRED/i.test(message)) {
+      useStore.getState().showToast(message, 'error')
+      return true
+    }
+    return false
+  }
+}
+
+/** 重试失败的任务：优先复用后端任务，payload 过期后创建新任务 */
 export async function retryTask(task: TaskRecord) {
+  if (await retryExistingBackendTask(task)) return
+
   const { settings } = useStore.getState()
   const activeProfile = getActiveApiProfile(settings)
   const normalizedParams = normalizeParamsForSettings(task.params, settings)

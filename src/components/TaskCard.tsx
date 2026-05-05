@@ -3,6 +3,7 @@ import type { TaskRecord } from '../types'
 import { useStore, getCachedImage, ensureImageCached, updateTaskInStore, retryTask, cancelBackendTask } from '../store'
 import { formatImageRatio } from '../lib/size'
 import { ParamValue } from '../lib/paramDisplay'
+import { formatQueueScopePositions, getReadableTaskError, getRunningTaskLabel, getTaskStageDuration, shortTaskId } from '../lib/taskDisplay'
 
 interface Props {
   task: TaskRecord
@@ -168,12 +169,10 @@ export default function TaskCard({
   const showSwipeAction = isSwipeReady || swipeActionActive
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const showRunningTimer = task.status === 'running' || isFalReconnecting
-  const isBackendQueued = task.status === 'running' && task.backendStatus === 'queued'
-  const runningLabel = isBackendQueued
-    ? task.backendQueuePosition
-      ? `排队 #${task.backendQueuePosition}`
-      : '排队中'
-    : '生成中...'
+  const runningLabel = getRunningTaskLabel(task)
+  const stageDuration = getTaskStageDuration(task)
+  const readableError = getReadableTaskError(task)
+  const scopedQueueLabels = formatQueueScopePositions(task.backendQueuePositions)
   const swipeBgClass = showSwipeAction
     ? swipeStartedSelected
       ? 'bg-gray-500 dark:bg-gray-600'
@@ -258,6 +257,11 @@ export default function TaskCard({
                 />
               </svg>
               <span className="text-xs text-gray-400 dark:text-gray-500">{runningLabel}</span>
+              {task.backendRetryCount != null && task.backendMaxRetries != null && task.backendRetryCount > 0 && (
+                <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-[10px] text-yellow-600 dark:text-yellow-400">
+                  重试 {task.backendRetryCount}/{task.backendMaxRetries}
+                </span>
+              )}
             </div>
           )}
           {task.status === 'error' && isFalReconnecting && (
@@ -296,7 +300,7 @@ export default function TaskCard({
                 />
               </svg>
               <span className="text-xs text-red-400 text-center leading-tight">
-                失败
+                {readableError}
               </span>
             </div>
           )}
@@ -358,6 +362,21 @@ export default function TaskCard({
             <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
               {task.prompt || '(无提示词)'}
             </p>
+            {task.backendTaskId && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+                <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono dark:bg-white/[0.05]">
+                  {shortTaskId(task.backendTaskId)}
+                </span>
+                <span>{runningLabel}</span>
+                {scopedQueueLabels.slice(0, 2).map((label) => (
+                  <span key={label}>{label}</span>
+                ))}
+                {stageDuration && <span>耗时 {stageDuration}</span>}
+                {task.backendRetryCount != null && task.backendMaxRetries != null && (
+                  <span>重试 {task.backendRetryCount}/{task.backendMaxRetries}</span>
+                )}
+              </div>
+            )}
           </div>
           <div className="mt-auto flex flex-col gap-1.5">
             {/* 参数：横向滚动 */}

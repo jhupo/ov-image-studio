@@ -46,6 +46,19 @@ const FALLBACK_TEMPLATES: PromptTemplate[] = [
   },
 ]
 
+const CATEGORY_LABELS: Record<string, string> = {
+  'Portrait & Photography': '人像摄影',
+  'Poster & Illustration': '海报插画',
+  'UI & Social Media Mockup': '界面与社媒',
+  'Character Design': '角色设计',
+  'Comparison & Community': '对比与社区',
+  General: '通用模板',
+}
+
+export function getPromptCategoryLabel(category: string) {
+  return CATEGORY_LABELS[category] ?? category
+}
+
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }

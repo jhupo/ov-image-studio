@@ -7,10 +7,10 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
-from .config import MAX_RETRIES, PAYLOAD_KEY_PREFIX, PAYLOAD_TTL_SECONDS, RESULT_KEY_PREFIX, RESULT_TTL_SECONDS
+from .config import MAX_RETRIES, PAYLOAD_KEY_PREFIX, PAYLOAD_TTL_SECONDS, RESULT_KEY_PREFIX, RESULT_TTL_SECONDS, TASK_METADATA_TTL_SECONDS
 from .db import db_conn, redis_client
 from .fingerprints import api_key_fingerprint, profile_fingerprint
-from .queue import queue_position, queue_task
+from .queue import queue_positions, queue_task
 from .timeutil import now_ms
 
 
@@ -108,30 +108,114 @@ def delete_task_result(task_id: str) -> None:
     redis_client.delete(result_key(task_id))
 
 
+def redis_ttl_seconds(key: str) -> int | None:
+    ttl = redis_client.ttl(key)
+    return ttl if ttl >= 0 else None
+
+
 def public_task(task: dict[str, Any]) -> dict[str, Any]:
     result = load_task_result(task["id"]) if task["status"] == "succeeded" else None
     if result is None:
         result = task.get("result_payload")
     if isinstance(result, str):
         result = json.loads(result)
+    metrics = task_phase_metrics(task)
+    positions = queue_positions(task)
     return {
         "id": task["id"],
         "requesterId": task.get("requester_id"),
         "status": task["status"],
-        "queuePosition": queue_position(task),
+        "queuePosition": positions["global"],
+        "queuePositions": positions,
         "priority": task.get("priority", 0),
         "retryCount": task.get("retry_count", 0),
         "maxRetries": task.get("max_retries", 0),
         "errorCode": task.get("error_code"),
+        "errorCategory": error_category(task.get("error_code"), task.get("error_message")),
         "error": task.get("error_message"),
         "createdAt": task["created_at"],
         "updatedAt": task["updated_at"],
         "queuedAt": task.get("queued_at"),
+        "availableAt": task.get("available_at"),
         "startedAt": task.get("started_at"),
         "finishedAt": task.get("finished_at"),
         "canceledAt": task.get("canceled_at"),
+        "leaseOwner": task.get("lease_owner"),
         "leaseExpiresAt": task.get("lease_expires_at"),
+        "phase": metrics["phase"],
+        "phaseStartedAt": metrics["phase_started_at"],
+        "queuedMs": metrics["queued_ms"],
+        "runningMs": metrics["running_ms"],
+        "totalMs": metrics["total_ms"],
+        "payloadTtlSeconds": redis_ttl_seconds(payload_key(task["id"])),
+        "resultTtlSeconds": redis_ttl_seconds(result_key(task["id"])),
         "result": result,
+    }
+
+
+def error_category(error_code: str | None, error_message: str | None = None) -> str | None:
+    if not error_code and not error_message:
+        return None
+    message = (error_message or "").lower()
+    code = error_code or ""
+    if code == "UPSTREAM_NO_AVAILABLE_ACCOUNTS" or "no available accounts" in message:
+        return "account_unavailable"
+    if code == "UPSTREAM_RATE_LIMITED":
+        return "rate_limited"
+    if code in {"UPSTREAM_TIMEOUT", "UPSTREAM_NETWORK", "UPSTREAM_5XX"}:
+        return "upstream_unavailable"
+    if code in {"IMAGE_DOWNLOAD_TIMEOUT", "IMAGE_DOWNLOAD_FAILED"}:
+        return "image_download_failed"
+    if code == "PAYLOAD_EXPIRED":
+        return "payload_expired"
+    if code in {"UPSTREAM_EMPTY_RESULT", "UPSTREAM_BAD_RESPONSE"}:
+        return "upstream_bad_response"
+    if code == "USER_CANCELED":
+        return "canceled"
+    if code == "LEASE_EXPIRED":
+        return "worker_recovered"
+    return "internal_error" if code == "INTERNAL_WORKER_ERROR" else "unknown"
+
+
+def task_phase_metrics(task: dict[str, Any]) -> dict[str, Any]:
+    now = now_ms()
+    created_at = task["created_at"]
+    queued_at = task.get("queued_at") or created_at
+    available_at = task.get("available_at") or queued_at
+    started_at = task.get("started_at")
+    finished_at = task.get("finished_at")
+    status = task["status"]
+    retry_count = task.get("retry_count", 0) or 0
+
+    if status == "queued":
+        phase = "retry_waiting" if retry_count > 0 and available_at > now else "queued"
+        phase_started_at = available_at if phase == "retry_waiting" else queued_at
+    elif status == "running":
+        phase = "running"
+        phase_started_at = started_at or queued_at
+    elif status == "succeeded":
+        phase = "succeeded"
+        phase_started_at = finished_at
+    elif status == "failed":
+        phase = "failed"
+        phase_started_at = finished_at
+    elif status == "canceled":
+        phase = "canceled"
+        phase_started_at = task.get("canceled_at") or finished_at
+    else:
+        phase = status
+        phase_started_at = task.get("updated_at")
+
+    running_end = finished_at or (now if status == "running" else None)
+    queued_end = started_at or (now if status == "queued" else finished_at)
+    total_end = finished_at or (now if status in {"queued", "running"} else task.get("updated_at") or now)
+
+    return {
+        "phase": phase,
+        "phase_started_at": phase_started_at,
+        "queued_ms": max(0, queued_end - queued_at) if queued_end else None,
+        "running_ms": max(0, running_end - started_at) if started_at and running_end else None,
+        "total_ms": max(0, total_end - created_at) if total_end else None,
     }
 
 
@@ -281,3 +365,90 @@ def list_tasks(
                 values,
             )
             return cur.fetchall()
+
+
+def summarize_tasks(requester_id: str | None = None, limit: int = 500) -> dict[str, Any]:
+    limit = max(1, min(limit, 1000))
+    clauses = []
+    values: list[Any] = []
+    if requester_id:
+        clauses.append("requester_id = %s")
+        values.append(requester_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    values.append(limit)
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT status, error_code, error_message, retry_count, created_at, updated_at, queued_at, started_at, finished_at
+                FROM image_tasks
+                {where}
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                values,
+            )
+            rows = cur.fetchall()
+
+    by_status: dict[str, int] = {}
+    by_error_category: dict[str, int] = {}
+    retrying = 0
+    total_queued_ms = 0
+    total_running_ms = 0
+    queued_samples = 0
+    running_samples = 0
+    latest_created_at = None
+
+    for row in rows:
+        status = row["status"]
+        by_status[status] = by_status.get(status, 0) + 1
+        if row.get("retry_count", 0) or 0:
+            retrying += 1
+        category = error_category(row.get("error_code"), row.get("error_message"))
+        if category:
+            by_error_category[category] = by_error_category.get(category, 0) + 1
+        metrics = task_phase_metrics(row)
+        if metrics["queued_ms"] is not None:
+            total_queued_ms += metrics["queued_ms"]
+            queued_samples += 1
+        if metrics["running_ms"] is not None:
+            total_running_ms += metrics["running_ms"]
+            running_samples += 1
+        if latest_created_at is None or row["created_at"] > latest_created_at:
+            latest_created_at = row["created_at"]
+
+    return {
+        "sampleSize": len(rows),
+        "latestCreatedAt": latest_created_at,
+        "byStatus": by_status,
+        "byErrorCategory": by_error_category,
+        "retrying": retrying,
+        "averageQueuedMs": round(total_queued_ms / queued_samples) if queued_samples else None,
+        "averageRunningMs": round(total_running_ms / running_samples) if running_samples else None,
+    }
+
+
+def cleanup_expired_task_metadata(now: int | None = None) -> int:
+    if TASK_METADATA_TTL_SECONDS <= 0:
+        return 0
+    cutoff = (now if now is not None else now_ms()) - TASK_METADATA_TTL_SECONDS * 1000
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM image_tasks
+                WHERE status IN ('succeeded', 'failed', 'canceled')
+                  AND updated_at < %s
+                RETURNING id
+                """,
+                (cutoff,),
+            )
+            deleted_ids = [row["id"] for row in cur.fetchall()]
+        conn.commit()
+    if deleted_ids:
+        pipe = redis_client.pipeline()
+        for task_id in deleted_ids:
+            pipe.delete(payload_key(task_id))
+            pipe.delete(result_key(task_id))
+        pipe.execute()
+    return len(deleted_ids)

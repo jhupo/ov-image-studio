@@ -4,45 +4,48 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       args:
-        HTTP_PROXY: http://192.168.2.31:12334
-        HTTPS_PROXY: http://192.168.2.31:12334
-        NO_PROXY: localhost,127.0.0.1,::1,postgres,redis,192.168.2.31,192.168.2.60
-    image: chaincloud-image-studio:local
-    container_name: chaincloud-image-studio
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,postgres,redis}
+    image: ${IMAGE_STUDIO_IMAGE:-chaincloud-image-studio}:${IMAGE_STUDIO_TAG:-local}
+    container_name: ${IMAGE_STUDIO_CONTAINER_NAME:-chaincloud-image-studio}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      DEFAULT_IMAGE_API_URL: http://192.168.2.60:8080/v1
-      DEFAULT_API_URL: http://192.168.2.60:8080/v1
-      ENABLE_API_PROXY: "false"
-      IMAGE_STUDIO_PORT: "8787"
-      POSTGRES_DSN: postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio
-      REDIS_URL: redis://redis:6379/0
-      IMAGE_STUDIO_WORKER_COUNT: "2"
-      IMAGE_STUDIO_MAX_CONCURRENT: "4"
-      IMAGE_STUDIO_MAX_CONCURRENT_PER_USER: "2"
-      IMAGE_STUDIO_MAX_CONCURRENT_PER_KEY: "2"
-      IMAGE_STUDIO_MAX_CONCURRENT_PER_PROFILE: "2"
-      IMAGE_STUDIO_PAYLOAD_TTL_SECONDS: "86400"
-      IMAGE_STUDIO_RESULT_TTL_SECONDS: "86400"
+      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-http://127.0.0.1:8080/v1}
+      DEFAULT_API_URL: ${DEFAULT_API_URL:-http://127.0.0.1:8080/v1}
+      ENABLE_API_PROXY: ${ENABLE_API_PROXY:-false}
+      IMAGE_STUDIO_PORT: ${IMAGE_STUDIO_PORT:-8787}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      IMAGE_STUDIO_WORKER_COUNT: ${IMAGE_STUDIO_WORKER_COUNT:-2}
+      IMAGE_STUDIO_MAX_CONCURRENT: ${IMAGE_STUDIO_MAX_CONCURRENT:-4}
+      IMAGE_STUDIO_MAX_CONCURRENT_PER_USER: ${IMAGE_STUDIO_MAX_CONCURRENT_PER_USER:-2}
+      IMAGE_STUDIO_MAX_CONCURRENT_PER_KEY: ${IMAGE_STUDIO_MAX_CONCURRENT_PER_KEY:-2}
+      IMAGE_STUDIO_MAX_CONCURRENT_PER_PROFILE: ${IMAGE_STUDIO_MAX_CONCURRENT_PER_PROFILE:-2}
+      IMAGE_STUDIO_PAYLOAD_TTL_SECONDS: ${IMAGE_STUDIO_PAYLOAD_TTL_SECONDS:-86400}
+      IMAGE_STUDIO_RESULT_TTL_SECONDS: ${IMAGE_STUDIO_RESULT_TTL_SECONDS:-86400}
+      IMAGE_STUDIO_CANCEL_TTL_SECONDS: ${IMAGE_STUDIO_CANCEL_TTL_SECONDS:-3600}
+      IMAGE_STUDIO_TASK_METADATA_TTL_SECONDS: ${IMAGE_STUDIO_TASK_METADATA_TTL_SECONDS:-604800}
+      IMAGE_STUDIO_CLEANUP_INTERVAL_SECONDS: ${IMAGE_STUDIO_CLEANUP_INTERVAL_SECONDS:-3600}
     ports:
-      - "80:80"
+      - "${IMAGE_STUDIO_HTTP_PORT:-80}:80"
     restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
-    container_name: chaincloud-image-studio-postgres
+    container_name: ${IMAGE_STUDIO_CONTAINER_NAME:-chaincloud-image-studio}-postgres
     environment:
-      POSTGRES_USER: chaincloud
-      POSTGRES_PASSWORD: chaincloud
-      POSTGRES_DB: chaincloud_image_studio
+      POSTGRES_USER: ${POSTGRES_USER:-chaincloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chaincloud}
+      POSTGRES_DB: ${POSTGRES_DB:-chaincloud_image_studio}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chaincloud -d chaincloud_image_studio"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -50,7 +53,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: chaincloud-image-studio-redis
+    container_name: ${IMAGE_STUDIO_CONTAINER_NAME:-chaincloud-image-studio}-redis
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data

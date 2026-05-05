@@ -1,15 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import { fetchPromptTemplates, type PromptTemplate } from '../lib/promptTemplates'
+import { fetchPromptTemplates, getPromptCategoryLabel, type PromptTemplate } from '../lib/promptTemplates'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
-import { useStore } from '../store'
+import { submitTask, useStore } from '../store'
 
 interface PromptTemplatesModalProps {
   onClose: () => void
 }
 
 const ALL_CATEGORY = 'All'
+const FAVORITES_CATEGORY = 'Favorites'
+const RECENT_CATEGORY = 'Recent'
+const FAVORITES_STORAGE_KEY = 'chaincloud.promptTemplateFavorites'
+const RECENT_STORAGE_KEY = 'chaincloud.promptTemplateRecent'
+const MAX_RECENT_TEMPLATES = 12
+
+function readStoredIds(key: string) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]')
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalProps) {
   const setPrompt = useStore((s) => s.setPrompt)
@@ -19,6 +33,8 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
   const [activeCategory, setActiveCategory] = useState(ALL_CATEGORY)
   const [searchQuery, setSearchQuery] = useState('')
   const [preview, setPreview] = useState<PromptTemplate | null>(null)
+  const [favoriteIds, setFavoriteIds] = useState<string[]>(() => readStoredIds(FAVORITES_STORAGE_KEY))
+  const [recentIds, setRecentIds] = useState<string[]>(() => readStoredIds(RECENT_STORAGE_KEY))
 
   useCloseOnEscape(true, () => {
     if (preview) {
@@ -44,25 +60,68 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
 
   const categories = useMemo(() => {
     const unique = Array.from(new Set(templates.map((item) => item.category).filter(Boolean)))
-    return [ALL_CATEGORY, ...unique]
+    return [ALL_CATEGORY, FAVORITES_CATEGORY, RECENT_CATEGORY, ...unique]
   }, [templates])
 
   const visibleTemplates = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase()
     return templates.filter((item) => {
-      if (activeCategory !== ALL_CATEGORY && item.category !== activeCategory) return false
+      if (activeCategory === FAVORITES_CATEGORY && !favoriteIds.includes(item.id)) return false
+      if (activeCategory === RECENT_CATEGORY && !recentIds.includes(item.id)) return false
+      if (![ALL_CATEGORY, FAVORITES_CATEGORY, RECENT_CATEGORY].includes(activeCategory) && item.category !== activeCategory) return false
       if (!normalizedQuery) return true
       return [item.title, item.summary, item.prompt, item.category, item.author]
         .join(' ')
         .toLowerCase()
         .includes(normalizedQuery)
     })
-  }, [activeCategory, searchQuery, templates])
+  }, [activeCategory, favoriteIds, recentIds, searchQuery, templates])
+
+  const orderedVisibleTemplates = useMemo(() => {
+    if (activeCategory !== RECENT_CATEGORY) return visibleTemplates
+    const order = new Map(recentIds.map((id, index) => [id, index]))
+    return [...visibleTemplates].sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999))
+  }, [activeCategory, recentIds, visibleTemplates])
+
+  const rememberTemplate = (template: PromptTemplate) => {
+    setRecentIds((prev) => {
+      const next = [template.id, ...prev.filter((id) => id !== template.id)].slice(0, MAX_RECENT_TEMPLATES)
+      localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(next))
+      return next
+    })
+  }
 
   const useTemplate = (template: PromptTemplate) => {
+    rememberTemplate(template)
     setPrompt(template.prompt)
     showToast('已填入提示词', 'success')
     onClose()
+  }
+
+  const useTemplateAndGenerate = (template: PromptTemplate) => {
+    rememberTemplate(template)
+    setPrompt(template.prompt)
+    onClose()
+    window.setTimeout(() => {
+      void submitTask()
+    }, 0)
+  }
+
+  const toggleFavorite = (template: PromptTemplate) => {
+    setFavoriteIds((prev) => {
+      const next = prev.includes(template.id)
+        ? prev.filter((id) => id !== template.id)
+        : [template.id, ...prev]
+      localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(next))
+      return next
+    })
+  }
+
+  const categoryLabel = (category: string) => {
+    if (category === ALL_CATEGORY) return '全部'
+    if (category === FAVORITES_CATEGORY) return '收藏'
+    if (category === RECENT_CATEGORY) return '最近'
+    return getPromptCategoryLabel(category)
   }
 
   const copyTemplate = async (template: PromptTemplate) => {
@@ -118,7 +177,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 onClick={() => setActiveCategory(category)}
                 className={`shrink-0 rounded px-4 py-2 text-sm font-semibold transition ${activeCategory === category ? 'bg-blue-500 text-white' : 'bg-white/[0.04] text-gray-300 hover:bg-white/[0.08] hover:text-gray-100'}`}
               >
-                {category}
+                {categoryLabel(category)}
               </button>
             ))}
             </div>
@@ -127,11 +186,12 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
           <div className="min-h-0 flex-1 overflow-y-auto pr-1 custom-scrollbar">
             {loading ? (
               <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-gray-400">正在加载模板...</div>
-            ) : visibleTemplates.length ? (
+            ) : orderedVisibleTemplates.length ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {visibleTemplates.map((template) => (
+                {orderedVisibleTemplates.map((template) => (
                   <article key={template.id} className="group overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.03] transition hover:border-blue-500/45">
-                    <button type="button" onClick={() => setPreview(template)} className="block aspect-[16/10] w-full overflow-hidden bg-gray-900 text-left">
+                    <div className="relative aspect-[16/10] w-full overflow-hidden bg-gray-900">
+                    <button type="button" onClick={() => setPreview(template)} className="block h-full w-full text-left">
                       {template.imageUrl ? (
                         <img src={template.imageUrl} alt={template.title} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
                       ) : (
@@ -140,6 +200,17 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                         </div>
                       )}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleFavorite(template)}
+                      className={`absolute right-2 top-2 rounded-full bg-black/50 p-1.5 backdrop-blur transition ${favoriteIds.includes(template.id) ? 'text-yellow-300' : 'text-white/70 hover:text-yellow-200'}`}
+                      title={favoriteIds.includes(template.id) ? '取消收藏' : '收藏模板'}
+                    >
+                      <svg className="h-4 w-4" fill={favoriteIds.includes(template.id) ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                      </svg>
+                    </button>
+                    </div>
                     <div className="space-y-3 p-3">
                       <button type="button" onClick={() => setPreview(template)} className="line-clamp-1 text-left text-base font-bold text-gray-100" title={template.title}>
                         {template.title}
@@ -150,6 +221,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                         <div className="flex shrink-0 items-center gap-3">
                           <button onClick={() => copyTemplate(template)} className="transition hover:text-gray-100">复制</button>
                           <button onClick={() => useTemplate(template)} className="font-semibold text-blue-400 transition hover:text-blue-300">使用</button>
+                          <button onClick={() => useTemplateAndGenerate(template)} className="font-semibold text-green-400 transition hover:text-green-300">生成</button>
                         </div>
                       </div>
                     </div>
@@ -182,7 +254,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 <div className="flex shrink-0 items-start justify-between gap-4 border-b border-white/[0.08] p-5">
                   <div className="min-w-0">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className="rounded bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300">{preview.category}</span>
+                      <span className="rounded bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300">{getPromptCategoryLabel(preview.category)}</span>
                       {preview.author && <span className="text-xs text-gray-500">{preview.author}</span>}
                     </div>
                     <h4 className="text-lg font-bold leading-snug text-gray-100">{preview.title}</h4>
@@ -223,6 +295,12 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                     className="rounded-lg bg-blue-500 px-5 py-2 text-sm font-bold text-white transition hover:bg-blue-400"
                   >
                     使用
+                  </button>
+                  <button
+                    onClick={() => useTemplateAndGenerate(preview)}
+                    className="rounded-lg bg-green-500 px-5 py-2 text-sm font-bold text-white transition hover:bg-green-400"
+                  >
+                    套用并生成
                   </button>
                 </div>
               </aside>

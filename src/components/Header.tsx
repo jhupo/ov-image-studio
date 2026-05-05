@@ -3,12 +3,14 @@ import { useStore } from '../store'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import HelpModal from './HelpModal'
 import PromptTemplatesModal from './PromptTemplatesModal'
+import RecentTasksModal from './RecentTasksModal'
 
 export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
   const [showHelp, setShowHelp] = useState(false)
   const [showPromptTemplates, setShowPromptTemplates] = useState(false)
+  const [showRecentTasks, setShowRecentTasks] = useState(false)
 
   return (
     <header data-no-drag-select className="safe-area-top sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-200 dark:border-white/[0.08]">
@@ -80,6 +82,23 @@ export default function Header() {
             </svg>
           </button>
           <button
+            onClick={() => setShowRecentTasks(true)}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+            title="最近任务"
+          >
+            <svg
+              className="w-5 h-5 text-gray-600 dark:text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              viewBox="0 0 24 24"
+            >
+              <path d="M3 12h4l3 8 4-16 3 8h4" />
+            </svg>
+          </button>
+          <button
             onClick={() => setShowSettings(true)}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
             title="设置"
@@ -108,6 +127,7 @@ export default function Header() {
       </div>
       {showPromptTemplates && <PromptTemplatesModal onClose={() => setShowPromptTemplates(false)} />}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showRecentTasks && <RecentTasksModal onClose={() => setShowRecentTasks(false)} />}
     </header>
   )
 }

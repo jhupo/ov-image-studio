@@ -22,6 +22,8 @@ export default function TaskGrid() {
   const startedOnCard = useRef(false)
   const startedWithCtrl = useRef(false)
   const initialSelection = useRef<string[]>([])
+  const previousStatuses = useRef<Map<string, string> | null>(null)
+  const [highlightedTaskIds, setHighlightedTaskIds] = useState<string[]>([])
   const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 
   const filteredTasks = useMemo(() => {
@@ -39,6 +41,25 @@ export default function TaskGrid() {
       return prompt.includes(q) || paramStr.includes(q)
     })
   }, [tasks, searchQuery, filterStatus, filterFavorite])
+
+  useEffect(() => {
+    const prev = previousStatuses.current
+    const current = new Map(tasks.map((task) => [task.id, task.status]))
+    previousStatuses.current = current
+    if (!prev) return
+
+    const newlyDone = tasks.find((task) => task.status === 'done' && prev.get(task.id) === 'running')
+    if (!newlyDone) return
+
+    setHighlightedTaskIds((ids) => [...new Set([newlyDone.id, ...ids])])
+    window.setTimeout(() => {
+      setHighlightedTaskIds((ids) => ids.filter((id) => id !== newlyDone.id))
+    }, 2800)
+    window.requestAnimationFrame(() => {
+      const card = gridRef.current?.querySelector(`[data-task-id="${CSS.escape(newlyDone.id)}"]`)
+      card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }, [tasks])
 
   const handleDelete = (task: typeof tasks[0]) => {
     setConfirmDialog({
@@ -200,7 +221,11 @@ export default function TaskGrid() {
     >
       <div ref={gridRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-10">
         {filteredTasks.map((task) => (
-          <div key={task.id} className="task-card-wrapper" data-task-id={task.id}>
+          <div
+            key={task.id}
+            className={`task-card-wrapper rounded-xl ${highlightedTaskIds.includes(task.id) ? 'task-card-new-result' : ''}`}
+            data-task-id={task.id}
+          >
             <TaskCard
               task={task}
               onClick={(e) => {

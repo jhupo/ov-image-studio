@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import threading
 import time
+import logging
 
+from .cancellation import clear_task_cancel_signal, is_task_cancelled
 from .config import (
+    CLEANUP_INTERVAL_SECONDS,
     CONCURRENCY_PREFIX,
     DELAYED_QUEUE_KEY,
     LEASE_RENEW_SECONDS,
@@ -20,7 +23,7 @@ from .config import (
 from .db import db_conn, redis_client
 from .queue import promote_delayed_tasks, queue_task
 from .tasks import (
-    delete_task_payload,
+    cleanup_expired_task_metadata,
     fetch_task,
     load_task_payload,
     renew_task_lease,
@@ -31,6 +34,7 @@ from .tasks import (
 from .timeutil import now_ms
 from .upstream import TaskExecutionError, call_openai_task
 
+logger = logging.getLogger("image_studio.worker")
 
 ACQUIRE_CONCURRENCY_SCRIPT = """
 local ttl = tonumber(ARGV[1])
@@ -114,6 +118,7 @@ def recover_expired_leases() -> None:
             expired = [row["id"] for row in cur.fetchall()]
         conn.commit()
     for task_id in expired:
+        logger.warning("task lease expired; requeued task_id=%s", task_id)
         queue_task(task_id)
 
 
@@ -145,6 +150,7 @@ def claim_task(task_id: str) -> dict | None:
                 return None
             if not acquire_concurrency(task):
                 conn.rollback()
+                logger.info("task waiting for concurrency task_id=%s", task_id)
                 queue_task(task_id, now + 1000)
                 return None
             cur.execute(
@@ -162,7 +168,17 @@ def claim_task(task_id: str) -> dict | None:
                 (now, WORKER_ID, now + LEASE_SECONDS * 1000, now, task_id),
             )
         conn.commit()
-    return fetch_task(task_id)
+    claimed = fetch_task(task_id)
+    if claimed:
+        logger.info(
+            "task started task_id=%s worker_id=%s retry=%s/%s requester=%s",
+            task_id,
+            WORKER_ID,
+            claimed.get("retry_count", 0),
+            claimed.get("max_retries", 0),
+            claimed.get("requester_id") or "anonymous",
+        )
+    return claimed
 
 
 def lease_renewer(task_id: str, stop: threading.Event) -> None:
@@ -190,7 +206,26 @@ def finish_task(task: dict, status: str, result: dict | None = None, error_code:
             lease_owner=None,
             lease_expires_at=None,
         )
+        if status == "succeeded":
+            logger.info(
+                "task succeeded task_id=%s worker_id=%s image_count=%s elapsed_ms=%s",
+                task["id"],
+                WORKER_ID,
+                len(result.get("images") or []) if result else 0,
+                now_ms() - task["created_at"],
+            )
+        else:
+            logger.error(
+                "task finished with error task_id=%s worker_id=%s status=%s error_code=%s error=%s",
+                task["id"],
+                WORKER_ID,
+                status,
+                error_code,
+                error_message,
+            )
     finally:
+        if status in {"succeeded", "failed"}:
+            clear_task_cancel_signal(task["id"])
         release_concurrency(task)
 
 
@@ -202,7 +237,6 @@ def retry_or_fail_task(task: dict, error: TaskExecutionError) -> None:
     can_retry = error.retryable and task["retry_count"] < task["max_retries"]
     if not can_retry:
         finish_task(task, "failed", error_code=error.code, error_message=str(error))
-        delete_task_payload(task["id"])
         return
     retry_count = task["retry_count"] + 1
     delay = RETRY_BASE_DELAY_SECONDS * (2 ** (retry_count - 1))
@@ -217,6 +251,16 @@ def retry_or_fail_task(task: dict, error: TaskExecutionError) -> None:
         error_message=str(error),
         lease_owner=None,
         lease_expires_at=None,
+    )
+    logger.warning(
+        "task retry scheduled task_id=%s worker_id=%s retry=%s/%s delay_seconds=%s error_code=%s error=%s",
+        task["id"],
+        WORKER_ID,
+        retry_count,
+        task["max_retries"],
+        delay,
+        error.code,
+        str(error),
     )
     release_concurrency(task)
     queue_task(task["id"], available_at)
@@ -237,9 +281,11 @@ def execute_claimed_task(task: dict) -> None:
     renewer.start()
     try:
         latest = fetch_task(task["id"])
-        if latest and latest["status"] == "canceled":
+        if (latest and latest["status"] == "canceled") or is_task_cancelled(task["id"]):
             release_concurrency(task)
             return
+        logger.info("task requesting upstream task_id=%s worker_id=%s", task["id"], WORKER_ID)
+        payload = {**payload, "_taskId": task["id"]}
         result = call_openai_task(payload)
         finish_task(task, "succeeded", result=result)
         delete_task_payload(task["id"])
@@ -264,10 +310,24 @@ def worker_loop() -> None:
             if task:
                 execute_claimed_task(task)
         except Exception:
+            logger.exception("worker loop error worker_id=%s", WORKER_ID)
             time.sleep(1)
+
+
+def cleanup_loop() -> None:
+    while True:
+        try:
+            deleted = cleanup_expired_task_metadata()
+            if deleted:
+                logger.info("task metadata cleanup deleted=%s", deleted)
+        except Exception:
+            logger.exception("task metadata cleanup failed worker_id=%s", WORKER_ID)
+        time.sleep(max(60, CLEANUP_INTERVAL_SECONDS))
 
 
 def start_workers() -> None:
     for index in range(max(1, WORKER_COUNT)):
         worker = threading.Thread(target=worker_loop, name=f"image-worker-{index + 1}", daemon=True)
         worker.start()
+    cleaner = threading.Thread(target=cleanup_loop, name="image-task-cleanup", daemon=True)
+    cleaner.start()

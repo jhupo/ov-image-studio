@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import requests
 from flask import Blueprint, jsonify, request
 
+from .cancellation import clear_task_cancel_signal, signal_task_cancel
 from .config import (
     DEFAULT_IMAGE_API_URL,
     DELAYED_QUEUE_KEY,
@@ -21,12 +22,12 @@ from .db import check_db, check_redis, redis_client
 from .queue import promote_delayed_tasks, queue_task, remove_task_from_queues
 from .tasks import (
     create_task,
-    delete_task_payload,
     delete_task_result,
     fetch_task,
     list_tasks,
     load_task_payload,
     public_task,
+    summarize_tasks,
     update_task,
 )
 from .timeutil import now_ms
@@ -144,6 +145,18 @@ def tasks_endpoint():
     return jsonify({"code": 0, "message": "success", "data": public_task(task)}), 201
 
 
+@api.route("/tasks/summary", methods=["GET", "OPTIONS"])
+def tasks_summary():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    requester_id = request.args.get("requesterId")
+    try:
+        limit = parse_int_arg("limit", 500) or 500
+    except ValueError as exc:
+        return error_response("BAD_REQUEST", str(exc), 400)
+    return jsonify({"code": 0, "message": "success", "data": summarize_tasks(requester_id, limit=limit)})
+
+
 @api.route("/tasks/<task_id>", methods=["GET", "OPTIONS"])
 def task_detail(task_id: str):
     if request.method == "OPTIONS":
@@ -163,8 +176,8 @@ def cancel_task(task_id: str):
         return error_response("NOT_FOUND", "Not found", 404)
     if task["status"] in TERMINAL_STATES:
         return jsonify({"code": 0, "message": "success", "data": public_task(task)})
+    signal_task_cancel(task_id)
     remove_task_from_queues(task_id)
-    delete_task_payload(task_id)
     delete_task_result(task_id)
     update_task(
         task_id,
@@ -231,5 +244,6 @@ def retry_task(task_id: str):
         lease_owner=None,
         lease_expires_at=None,
     )
+    clear_task_cancel_signal(task_id)
     queue_task(task_id)
     return jsonify({"code": 0, "message": "success", "data": public_task(fetch_task(task_id))})
