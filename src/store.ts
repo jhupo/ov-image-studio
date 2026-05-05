@@ -627,6 +627,13 @@ function scheduleLocalTaskPoll(taskId: string, delayMs = 1500) {
   localTaskPollTimers.set(taskId, timer)
 }
 
+export function ensureLocalBackendTaskPoll(taskId: string, delayMs = 0) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task?.backendTaskId || task.status !== 'running') return
+  if (localTaskPollTimers.has(taskId)) return
+  scheduleLocalTaskPoll(taskId, delayMs)
+}
+
 async function executeTaskViaLocalBackend(taskId: string) {
   const state = useStore.getState()
   const task = state.tasks.find((item) => item.id === taskId)

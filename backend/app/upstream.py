@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import requests
 
 from .config import DEFAULT_IMAGE_API_URL, TASK_TIMEOUT_SECONDS
 from .fingerprints import build_api_url, resolve_images_base_url
+
+
+PROMPT_REWRITE_GUARD_PREFIX = "Use the following text as the complete prompt. Do not rewrite it:"
 
 
 class TaskExecutionError(Exception):
@@ -50,6 +54,32 @@ def pick_actual_params(source: dict[str, Any]) -> dict[str, Any]:
     return actual
 
 
+def add_prompt_guard(prompt: str) -> str:
+    if prompt.startswith(PROMPT_REWRITE_GUARD_PREFIX):
+        return prompt
+    return f"{PROMPT_REWRITE_GUARD_PREFIX}\n{prompt}"
+
+
+def is_images_api_unsupported_error(exc: BaseException) -> bool:
+    if not isinstance(exc, TaskExecutionError):
+        return False
+    message = str(exc).lower()
+    return (
+        exc.code == "UPSTREAM_BAD_RESPONSE"
+        and "images api is not supported for this platform" in message
+    )
+
+
+def with_responses_api(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **payload,
+        "profile": {
+            **payload["profile"],
+            "apiMode": "responses",
+        },
+    }
+
+
 def raise_upstream_error(exc: requests.RequestException) -> None:
     if isinstance(exc, requests.Timeout):
         raise TaskExecutionError("UPSTREAM_TIMEOUT", "Upstream request timed out", True) from exc
@@ -57,6 +87,8 @@ def raise_upstream_error(exc: requests.RequestException) -> None:
     if response is not None:
         status = response.status_code
         message = response.text[:1000] if response.text else str(exc)
+        if "no available accounts" in message.lower():
+            raise TaskExecutionError("UPSTREAM_NO_AVAILABLE_ACCOUNTS", message, False) from exc
         if status == 429:
             raise TaskExecutionError("UPSTREAM_RATE_LIMITED", message, True) from exc
         if 500 <= status < 600:
@@ -66,6 +98,65 @@ def raise_upstream_error(exc: requests.RequestException) -> None:
 
 
 def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
+    profile = payload["profile"]
+    params = payload["params"]
+    output_count = max(1, int(params.get("n", 1) or 1))
+    try:
+        if profile.get("apiMode") != "responses" and profile.get("codexCli") and output_count > 1:
+            return call_openai_images_task_concurrent(payload, output_count)
+        return call_openai_task_single(payload)
+    except TaskExecutionError as exc:
+        if profile.get("apiMode") != "responses" and is_images_api_unsupported_error(exc):
+            return call_openai_task_single(with_responses_api(payload))
+        raise
+
+
+def call_openai_images_task_concurrent(payload: dict[str, Any], output_count: int) -> dict[str, Any]:
+    single_payload = {
+        **payload,
+        "params": {
+            **payload["params"],
+            "n": 1,
+            "quality": "auto",
+        },
+    }
+    results: list[dict[str, Any]] = []
+    errors: list[BaseException] = []
+
+    with ThreadPoolExecutor(max_workers=min(output_count, 8)) as executor:
+        futures = [executor.submit(call_openai_task_single, single_payload) for _ in range(output_count)]
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except BaseException as exc:
+                errors.append(exc)
+
+    if not results:
+        if errors:
+            raise errors[0]
+        raise TaskExecutionError("UPSTREAM_EMPTY_RESULT", "All concurrent image requests failed", True)
+
+    images: list[str] = []
+    actual_params_list: list[dict[str, Any]] = []
+    revised_prompts: list[str | None] = []
+    for result in results:
+        result_images = result.get("images") or []
+        images.extend(result_images)
+        actual_params_list.extend(result.get("actualParamsList") or [result.get("actualParams") or {} for _ in result_images])
+        revised_prompts.extend(result.get("revisedPrompts") or [None for _ in result_images])
+
+    return {
+        "images": images,
+        "actualParams": {
+            **(results[0].get("actualParams") or {}),
+            "n": len(images),
+        },
+        "actualParamsList": actual_params_list,
+        "revisedPrompts": revised_prompts,
+    }
+
+
+def call_openai_task_single(payload: dict[str, Any]) -> dict[str, Any]:
     profile = payload["profile"]
     prompt = payload["prompt"]
     params = payload["params"]
@@ -81,6 +172,7 @@ def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         if profile.get("apiMode") == "responses":
+            protected_prompt = add_prompt_guard(prompt)
             body: dict[str, Any] = {
                 "model": profile["model"],
                 "input": (
@@ -88,13 +180,13 @@ def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
                         {
                             "role": "user",
                             "content": [
-                                {"type": "input_text", "text": prompt},
+                                {"type": "input_text", "text": protected_prompt},
                                 *[{"type": "input_image", "image_url": item} for item in input_images],
                             ],
                         }
                     ]
                     if input_images
-                    else prompt
+                    else protected_prompt
                 ),
                 "tools": [
                     {
@@ -141,6 +233,7 @@ def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
             }
 
         images_base = resolve_images_base_url(profile)
+        request_prompt = add_prompt_guard(prompt) if profile.get("codexCli") else prompt
         if input_images:
             files: list[tuple[str, tuple[str, bytes, str]]] = []
             for index, item in enumerate(input_images):
@@ -152,7 +245,7 @@ def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
                 files.append(("mask", ("mask.png", mask_content, mask_type)))
             form_data: dict[str, Any] = {
                 "model": profile["model"],
-                "prompt": prompt,
+                "prompt": request_prompt,
                 "size": params["size"],
                 "output_format": params["output_format"],
                 "moderation": params["moderation"],
@@ -173,7 +266,7 @@ def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             body = {
                 "model": profile["model"],
-                "prompt": prompt,
+                "prompt": request_prompt,
                 "size": params["size"],
                 "output_format": params["output_format"],
                 "moderation": params["moderation"],

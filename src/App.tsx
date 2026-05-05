@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { initStore } from './store'
+import { ensureLocalBackendTaskPoll, initStore } from './store'
 import { useStore } from './store'
 import { normalizeBaseUrl } from './lib/api'
 import { normalizeSettings, switchApiProfileProvider } from './lib/apiProfiles'
@@ -22,6 +22,7 @@ export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   const setEmbeddedSub2Api = useStore((s) => s.setEmbeddedSub2Api)
   const showToast = useStore((s) => s.showToast)
+  const tasks = useStore((s) => s.tasks)
   useDockerApiUrlMigrationNotice()
 
   useEffect(() => {
@@ -221,6 +222,20 @@ export default function App() {
     document.addEventListener('dragstart', preventPageImageDrag)
     return () => document.removeEventListener('dragstart', preventPageImageDrag)
   }, [])
+
+  useEffect(() => {
+    const ensureRunningPolls = () => {
+      for (const task of useStore.getState().tasks) {
+        if (task.status === 'running' && task.backendTaskId) {
+          ensureLocalBackendTaskPoll(task.id)
+        }
+      }
+    }
+
+    ensureRunningPolls()
+    const timer = window.setInterval(ensureRunningPolls, 3000)
+    return () => window.clearInterval(timer)
+  }, [tasks])
 
   return (
     <>

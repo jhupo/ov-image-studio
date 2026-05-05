@@ -3,6 +3,10 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        HTTP_PROXY: http://192.168.2.31:12334
+        HTTPS_PROXY: http://192.168.2.31:12334
+        NO_PROXY: localhost,127.0.0.1,::1,postgres,redis,192.168.2.31,192.168.2.60
     image: chaincloud-image-studio:local
     container_name: chaincloud-image-studio
     depends_on:

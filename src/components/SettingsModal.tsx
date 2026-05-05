@@ -111,6 +111,11 @@ export default function SettingsModal() {
     commitSettings(nextDraft)
   }
 
+  const commitSettingsPatch = (patch: Partial<AppSettings>) => {
+    const nextDraft = normalizeSettings({ ...draft, ...patch })
+    commitSettings(nextDraft)
+  }
+
   const handleEmbeddedApiKeyChange = (value: string) => {
     const selectedId = Number(value)
     const selectedApiKey = embeddedSub2Api.apiKeys.find((item) => item.id === selectedId)
@@ -199,7 +204,7 @@ export default function SettingsModal() {
         onClick={handleClose}
       />
       <div
-        className="relative z-10 w-full max-w-2xl rounded-3xl border border-white/50 bg-white/95 p-6 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 overflow-y-auto max-h-[88vh] custom-scrollbar"
+        className="relative z-10 w-full max-w-2xl min-h-[520px] rounded-3xl border border-white/50 bg-white/95 p-6 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 overflow-y-auto max-h-[88vh] custom-scrollbar"
       >
         <div className="mb-5 flex items-center justify-between gap-4">
           <h3 className="text-base font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
@@ -437,6 +442,39 @@ export default function SettingsModal() {
                     </div>
                   )}
                 </div>
+              )}
+
+              {activeProfile.provider === 'openai' && (
+                <div className="overflow-hidden rounded-2xl border border-gray-200/70 bg-white/40 dark:border-white/[0.08] dark:bg-white/[0.025]">
+                  <div className="divide-y divide-gray-200/70 dark:divide-white/[0.08]">
+                    <div className="flex min-h-[46px] items-center justify-between gap-4 px-4">
+                      <div className="min-w-0 text-sm font-medium text-gray-700 dark:text-gray-200">Codex CLI 兼容模式</div>
+                      <button
+                        type="button"
+                        onClick={() => updateActiveProfile({ codexCli: !activeProfile.codexCli }, true)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${activeProfile.codexCli ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        role="switch"
+                        aria-checked={activeProfile.codexCli}
+                        aria-label="Codex CLI 兼容模式"
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${activeProfile.codexCli ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                      </button>
+                    </div>
+                    <div className="flex min-h-[46px] items-center justify-between gap-4 px-4">
+                      <div className="min-w-0 text-sm font-medium text-gray-700 dark:text-gray-200">提交后清空输入框</div>
+                      <button
+                        type="button"
+                        onClick={() => commitSettingsPatch({ clearInputAfterSubmit: !draft.clearInputAfterSubmit })}
+                        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${draft.clearInputAfterSubmit ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        role="switch"
+                        aria-checked={draft.clearInputAfterSubmit}
+                        aria-label="提交后清空输入框"
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${draft.clearInputAfterSubmit ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                      </button>
+                    </div>
+                  </div>
+              </div>
               )}
 
               {activeProfile.provider === 'openai' && (

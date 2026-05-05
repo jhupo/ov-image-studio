@@ -1,6 +1,10 @@
 # ---- Build stage ----
 FROM node:20-alpine AS build
 
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
 WORKDIR /app
 
 ENV VITE_DEFAULT_IMAGE_API_URL=__VITE_DEFAULT_IMAGE_API_URL_PLACEHOLDER__
@@ -9,13 +13,19 @@ ENV VITE_DOCKER_DEPLOYMENT=__VITE_DOCKER_DEPLOYMENT_PLACEHOLDER__
 ENV VITE_DOCKER_LEGACY_API_URL_USED=__VITE_DOCKER_LEGACY_API_URL_USED_PLACEHOLDER__
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" no_proxy="$NO_PROXY" \
+    HTTP_PROXY="$HTTP_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
+    npm ci
 
 COPY . .
 RUN npm run build
 
 # ---- Production stage ----
 FROM nginx:alpine
+
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
 
 ENV HOST=0.0.0.0
 ENV PORT=80
@@ -32,8 +42,12 @@ COPY deploy/migrate-api-env.envsh /docker-entrypoint.d/05-migrate-api-env.envsh
 COPY deploy/inject-api-url.sh /docker-entrypoint.d/40-inject-api-url.sh
 COPY backend /opt/app/backend
 COPY requirements.txt /opt/app/requirements.txt
-RUN apk add --no-cache python3 py3-pip \
-    && python3 -m pip install --break-system-packages --no-cache-dir -r /opt/app/requirements.txt
+RUN http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" no_proxy="$NO_PROXY" \
+    HTTP_PROXY="$HTTP_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
+    apk add --no-cache python3 py3-pip \
+    && http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" no_proxy="$NO_PROXY" \
+       HTTP_PROXY="$HTTP_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
+       python3 -m pip install --break-system-packages --no-cache-dir -r /opt/app/requirements.txt
 RUN chmod +x /docker-entrypoint.d/05-migrate-api-env.envsh /docker-entrypoint.d/40-inject-api-url.sh \
     && sed -i 's/\r$//' /docker-entrypoint.d/05-migrate-api-env.envsh /docker-entrypoint.d/40-inject-api-url.sh /etc/nginx/templates/default.conf.template
 

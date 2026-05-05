@@ -2,11 +2,13 @@ import { useState } from 'react'
 import { useStore } from '../store'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import HelpModal from './HelpModal'
+import PromptTemplatesModal from './PromptTemplatesModal'
 
 export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
   const [showHelp, setShowHelp] = useState(false)
+  const [showPromptTemplates, setShowPromptTemplates] = useState(false)
 
   return (
     <header data-no-drag-select className="safe-area-top sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-200 dark:border-white/[0.08]">
@@ -37,6 +39,27 @@ export default function Header() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowPromptTemplates(true)}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+            title="提示词模板"
+          >
+            <svg
+              className="w-5 h-5 text-gray-600 dark:text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              viewBox="0 0 24 24"
+            >
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <path d="M14 15h7" />
+              <path d="M14 19h5" />
+            </svg>
+          </button>
           <button
             onClick={() => setShowHelp(true)}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
@@ -83,6 +106,7 @@ export default function Header() {
           </button>
         </div>
       </div>
+      {showPromptTemplates && <PromptTemplatesModal onClose={() => setShowPromptTemplates(false)} />}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </header>
   )
