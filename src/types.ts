@@ -14,7 +14,6 @@ export interface ApiProfile {
   timeout: number
   apiMode: ApiMode
   codexCli: boolean
-  apiProxy: boolean
 }
 
 export interface AppSettings {
@@ -28,7 +27,6 @@ export interface AppSettings {
   timeout: number
   apiMode: ApiMode
   codexCli: boolean
-  apiProxy: boolean
   clearInputAfterSubmit: boolean
   embeddedApiKeyId: number | null
   profiles: ApiProfile[]

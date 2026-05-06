@@ -182,15 +182,19 @@ function normalizeTemplate(record: Record<string, unknown>, index: number): Prom
 }
 
 function findDisplayPrompt(record: Record<string, unknown>): string {
-  const content = findString(record, ['translatedContent', 'content', 'prompt'])
+  const content = findString(record, ['content', 'translatedContent', 'prompt', 'text'])
   if (!content) return ''
+  return formatTemplatePrompt(content) || findString(record, ['description', 'translatedDescription', 'text'])
+}
+
+export function formatTemplatePrompt(content: string): string {
   const trimmed = content.trim()
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return trimmed
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return replaceArgumentPlaceholders(trimmed)
 
   try {
-    return summarizeJsonPrompt(JSON.parse(trimmed)) || findString(record, ['description', 'translatedDescription', 'text'])
+    return formatJsonPromptText(replaceJsonPromptPlaceholders(JSON.parse(trimmed)))
   } catch {
-    return findString(record, ['description', 'translatedDescription', 'text'])
+    return replaceArgumentPlaceholders(trimmed)
   }
 }
 
@@ -198,32 +202,50 @@ function findSummary(record: Record<string, unknown>, prompt: string): string {
   return findString(record, ['description', 'translatedDescription']) || prompt
 }
 
-function summarizeJsonPrompt(value: unknown): string {
-  const parts: string[] = []
-  collectJsonPromptText(value, parts)
-  return Array.from(new Set(parts))
-    .filter((item) => item.length > 2)
-    .slice(0, 80)
+function replaceArgumentPlaceholders(value: string): string {
+  return value.replace(/\{argument\b[^}]*\bdefault=(["'])(.*?)\1[^}]*\}/g, '$2').trim()
+}
+
+function replaceJsonPromptPlaceholders(value: unknown): unknown {
+  if (typeof value === 'string') return replaceArgumentPlaceholders(value)
+  if (Array.isArray(value)) return value.map(replaceJsonPromptPlaceholders)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      replaceJsonPromptPlaceholders(item),
+    ]),
+  )
+}
+
+function formatJsonPromptText(value: unknown, depth = 0): string {
+  const indent = '  '.repeat(depth)
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) {
+    if (value.every((item) => typeof item !== 'object' || item == null)) {
+      return value.map((item) => formatJsonPromptText(item, depth)).join(', ')
+    }
+    return value
+      .map((item) => {
+        const formatted = formatJsonPromptText(item, depth + 1)
+        return `${indent}- ${formatted.replace(/\n/g, `\n${indent}  `)}`
+      })
+      .join('\n')
+  }
+  if (!value || typeof value !== 'object') return ''
+
+  return Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => {
+      const formatted = formatJsonPromptText(item, depth + 1)
+      if (!formatted.includes('\n')) return `${indent}${formatPromptKey(key)}: ${formatted}`
+      return `${indent}${formatPromptKey(key)}:\n${formatted}`
+    })
     .join('\n')
 }
 
-function collectJsonPromptText(value: unknown, parts: string[]) {
-  if (typeof value === 'string') {
-    const cleaned = value.replace(/\{argument\s+name="([^"]+)"\s+default="([^"]*)"\}/g, '$2').trim()
-    if (cleaned && !/^https?:\/\//i.test(cleaned) && !/^www\./i.test(cleaned)) parts.push(cleaned)
-    return
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((item) => collectJsonPromptText(item, parts))
-    return
-  }
-
-  if (!value || typeof value !== 'object') return
-  for (const [key, item] of Object.entries(value)) {
-    if (/url|link|source|id|count/i.test(key)) continue
-    collectJsonPromptText(item, parts)
-  }
+function formatPromptKey(key: string) {
+  return key.replace(/_/g, ' ')
 }
 
 export async function fetchPromptTemplates(): Promise<PromptTemplate[]> {

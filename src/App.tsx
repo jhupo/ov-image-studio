@@ -3,7 +3,6 @@ import { ensureLocalBackendTaskPoll, initStore } from './store'
 import { useStore } from './store'
 import { normalizeBaseUrl } from './lib/api'
 import { normalizeSettings, switchApiProfileProvider } from './lib/apiProfiles'
-import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import type { ApiMode, ApiProvider, AppSettings } from './types'
 import { detectEmbeddedSub2ApiContext, fetchEmbeddedSub2ApiKeys, getEmbeddedSub2ApiToken } from './lib/sub2apiEmbedded'
 import Header from './components/Header'
@@ -23,89 +22,97 @@ export default function App() {
   const setEmbeddedSub2Api = useStore((s) => s.setEmbeddedSub2Api)
   const showToast = useStore((s) => s.showToast)
   const tasks = useStore((s) => s.tasks)
-  useDockerApiUrlMigrationNotice()
 
   useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search)
-    const nextSettings: Partial<AppSettings> = {}
+    let cancelled = false
 
-    const apiUrlParam = searchParams.get('apiUrl')
-    const imageApiUrlParam = searchParams.get('imageApiUrl')
-    const adminApiUrlParam = searchParams.get('adminApiUrl')
-    const normalizedApiUrl = normalizeBaseUrl(adminApiUrlParam ?? apiUrlParam ?? '')
-    if (normalizedApiUrl) {
-      nextSettings.baseUrl = normalizedApiUrl
-      nextSettings.embeddedAdminBaseUrl = normalizedApiUrl
-    }
-    if (imageApiUrlParam !== null) {
-      nextSettings.imageApiBaseUrl = normalizeBaseUrl(imageApiUrlParam.trim())
-    }
+    void (async () => {
+      await initStore()
+      if (cancelled) return
 
-    const apiKeyParam = searchParams.get('apiKey')
-    if (apiKeyParam !== null) {
-      nextSettings.apiKey = apiKeyParam.trim()
-    }
+      const searchParams = new URLSearchParams(window.location.search)
+      const nextSettings: Partial<AppSettings> = {}
 
-    const adminApiKeyParam = searchParams.get('adminApiKey')
-    if (adminApiKeyParam !== null) {
-      nextSettings.embeddedAdminApiKey = adminApiKeyParam.trim()
-    }
+      const apiUrlParam = searchParams.get('apiUrl')
+      const imageApiUrlParam = searchParams.get('imageApiUrl')
+      const adminApiUrlParam = searchParams.get('adminApiUrl')
+      const normalizedApiUrl = normalizeBaseUrl(adminApiUrlParam ?? apiUrlParam ?? '')
+      if (normalizedApiUrl) {
+        nextSettings.baseUrl = normalizedApiUrl
+        nextSettings.embeddedAdminBaseUrl = normalizedApiUrl
+      }
+      if (imageApiUrlParam !== null) {
+        nextSettings.imageApiBaseUrl = normalizeBaseUrl(imageApiUrlParam.trim())
+      }
 
-    const codexCliParam = searchParams.get('codexCli')
-    if (codexCliParam !== null) {
-      nextSettings.codexCli = codexCliParam.trim().toLowerCase() === 'true'
-    }
+      const apiKeyParam = searchParams.get('apiKey')
+      if (apiKeyParam !== null) {
+        nextSettings.apiKey = apiKeyParam.trim()
+      }
 
-    const apiModeParam = searchParams.get('apiMode')
-    if (apiModeParam === 'images' || apiModeParam === 'responses') {
-      nextSettings.apiMode = apiModeParam
-    }
+      const adminApiKeyParam = searchParams.get('adminApiKey')
+      if (adminApiKeyParam !== null) {
+        nextSettings.embeddedAdminApiKey = adminApiKeyParam.trim()
+      }
 
-    const providerParam = searchParams.get('provider')?.trim().toLowerCase()
-    if (providerParam) {
-      const provider: ApiProvider | null = providerParam === 'fal'
-        ? 'fal'
-        : ['openai', 'openai-compatible'].includes(providerParam)
-          ? 'openai'
-          : null
-      if (provider) {
-        const state = useStore.getState()
-        const settings = normalizeSettings(state.settings)
-        const current = settings.profiles.find((profile) => profile.id === settings.activeProfileId) ?? settings.profiles[0]
-        if (current) {
-          nextSettings.profiles = settings.profiles.map((profile) =>
-            profile.id === current.id
-              ? {
-                  ...switchApiProfileProvider(profile, provider),
-                  ...(nextSettings.apiKey !== undefined ? { apiKey: nextSettings.apiKey } : {}),
-                  ...(provider === 'openai' && nextSettings.apiMode !== undefined ? { apiMode: nextSettings.apiMode } : {}),
-                  ...(provider === 'openai' && nextSettings.codexCli !== undefined ? { codexCli: nextSettings.codexCli } : {}),
-                }
-              : profile,
-          )
-          nextSettings.activeProfileId = current.id
+      const codexCliParam = searchParams.get('codexCli')
+      if (codexCliParam !== null) {
+        nextSettings.codexCli = codexCliParam.trim().toLowerCase() === 'true'
+      }
+
+      const apiModeParam = searchParams.get('apiMode')
+      if (apiModeParam === 'images' || apiModeParam === 'responses') {
+        nextSettings.apiMode = apiModeParam
+      }
+
+      const providerParam = searchParams.get('provider')?.trim().toLowerCase()
+      if (providerParam) {
+        const provider: ApiProvider | null = providerParam === 'fal'
+          ? 'fal'
+          : ['openai', 'openai-compatible'].includes(providerParam)
+            ? 'openai'
+            : null
+        if (provider) {
+          const state = useStore.getState()
+          const settings = normalizeSettings(state.settings)
+          const current = settings.profiles.find((profile) => profile.id === settings.activeProfileId) ?? settings.profiles[0]
+          if (current) {
+            nextSettings.profiles = settings.profiles.map((profile) =>
+              profile.id === current.id
+                ? {
+                    ...switchApiProfileProvider(profile, provider),
+                    ...(nextSettings.apiKey !== undefined ? { apiKey: nextSettings.apiKey } : {}),
+                    ...(provider === 'openai' && nextSettings.apiMode !== undefined ? { apiMode: nextSettings.apiMode } : {}),
+                    ...(provider === 'openai' && nextSettings.codexCli !== undefined ? { codexCli: nextSettings.codexCli } : {}),
+                  }
+                : profile,
+            )
+            nextSettings.activeProfileId = current.id
+          }
         }
       }
+
+      if (Object.keys(nextSettings).length > 0) setSettings(nextSettings)
+
+      if (searchParams.has('apiUrl') || searchParams.has('imageApiUrl') || searchParams.has('adminApiUrl') || searchParams.has('apiKey') || searchParams.has('adminApiKey') || searchParams.has('codexCli') || searchParams.has('apiMode') || searchParams.has('provider')) {
+        searchParams.delete('apiUrl')
+        searchParams.delete('imageApiUrl')
+        searchParams.delete('adminApiUrl')
+        searchParams.delete('apiKey')
+        searchParams.delete('adminApiKey')
+        searchParams.delete('codexCli')
+        searchParams.delete('apiMode')
+        searchParams.delete('provider')
+
+        const nextSearch = searchParams.toString()
+        const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
+        window.history.replaceState(null, '', nextUrl)
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
-
-    setSettings(nextSettings)
-
-    if (searchParams.has('apiUrl') || searchParams.has('imageApiUrl') || searchParams.has('adminApiUrl') || searchParams.has('apiKey') || searchParams.has('adminApiKey') || searchParams.has('codexCli') || searchParams.has('apiMode') || searchParams.has('provider')) {
-      searchParams.delete('apiUrl')
-      searchParams.delete('imageApiUrl')
-      searchParams.delete('adminApiUrl')
-      searchParams.delete('apiKey')
-      searchParams.delete('adminApiKey')
-      searchParams.delete('codexCli')
-      searchParams.delete('apiMode')
-      searchParams.delete('provider')
-
-      const nextSearch = searchParams.toString()
-      const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
-      window.history.replaceState(null, '', nextUrl)
-    }
-
-    initStore()
   }, [setSettings])
 
   useEffect(() => {
@@ -135,7 +142,6 @@ export default function App() {
             ? {
                 ...profile,
                 provider: 'openai',
-                apiProxy: true,
                 apiKey: '',
               }
             : profile,
@@ -184,7 +190,6 @@ export default function App() {
               ? {
                   ...profile,
                   provider: 'openai',
-                  apiProxy: true,
                   apiKey: selectedApiKey.key,
                 }
               : profile,

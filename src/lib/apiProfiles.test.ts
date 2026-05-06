@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_BASE_URL,
   DEFAULT_FAL_BASE_URL,
@@ -18,7 +18,6 @@ describe('mergeImportedSettings', () => {
       timeout: 120,
       apiMode: 'responses',
       codexCli: true,
-      apiProxy: true,
     })
 
     expect(merged.profiles).toHaveLength(1)
@@ -32,7 +31,6 @@ describe('mergeImportedSettings', () => {
       timeout: 120,
       apiMode: 'responses',
       codexCli: true,
-      apiProxy: true,
     })
   })
 
@@ -49,7 +47,6 @@ describe('mergeImportedSettings', () => {
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
-          apiProxy: false,
         },
         {
           id: 'imported-fal',
@@ -61,7 +58,6 @@ describe('mergeImportedSettings', () => {
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
-          apiProxy: false,
         },
       ],
       activeProfileId: 'imported-fal',
@@ -84,7 +80,6 @@ describe('mergeImportedSettings', () => {
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
-          apiProxy: false,
         },
         {
           id: 'imported-openai-b',
@@ -96,7 +91,6 @@ describe('mergeImportedSettings', () => {
           timeout: 600,
           apiMode: 'images',
           codexCli: true,
-          apiProxy: true,
         },
       ],
       activeProfileId: 'imported-openai-b',
@@ -149,7 +143,6 @@ describe('mergeImportedSettings', () => {
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
-          apiProxy: false,
         },
         {
           id: 'imported-fal',
@@ -161,7 +154,6 @@ describe('mergeImportedSettings', () => {
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
-          apiProxy: false,
         },
       ],
       activeProfileId: 'imported-fal',
@@ -193,7 +185,6 @@ describe('mergeImportedSettings', () => {
           timeout: 600,
           apiMode: 'images',
           codexCli: true,
-          apiProxy: true,
         },
         {
           id: 'new-fal',
@@ -205,7 +196,6 @@ describe('mergeImportedSettings', () => {
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
-          apiProxy: false,
         },
       ],
     })
@@ -215,3 +205,4 @@ describe('mergeImportedSettings', () => {
     expect(merged.profiles[1]).toMatchObject({ provider: 'fal', apiKey: 'fal-key', model: DEFAULT_FAL_MODEL })
   })
 })
+

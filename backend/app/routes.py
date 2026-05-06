@@ -24,10 +24,8 @@ from .tasks import (
     create_task,
     delete_task_result,
     fetch_task,
-    list_tasks,
     load_task_payload,
     public_task,
-    summarize_tasks,
     update_task,
 )
 from .timeutil import now_ms
@@ -117,18 +115,7 @@ def tasks_endpoint():
     if request.method == "OPTIONS":
         return ("", 204)
     if request.method == "GET":
-        requester_id = request.args.get("requesterId")
-        status = request.args.get("status")
-        if status and status not in VALID_TASK_STATUSES:
-            return error_response("BAD_REQUEST", "Invalid task status", 400)
-        try:
-            limit = parse_int_arg("limit", 200) or 200
-            before = parse_int_arg("before")
-        except ValueError as exc:
-            return error_response("BAD_REQUEST", str(exc), 400)
-        items = [public_task(task) for task in list_tasks(requester_id, status=status, limit=limit, before=before)]
-        next_before = items[-1]["createdAt"] if len(items) == max(1, min(limit, 500)) else None
-        return jsonify({"code": 0, "message": "success", "data": {"items": items, "nextBefore": next_before}})
+        return error_response("NOT_FOUND", "Not found", 404)
 
     payload = request.get_json(silent=True) or {}
     idempotency_key = request.headers.get("Idempotency-Key") or payload.get("idempotencyKey")
@@ -143,18 +130,6 @@ def tasks_endpoint():
     except ValueError as exc:
         return error_response("BAD_REQUEST", str(exc), 400)
     return jsonify({"code": 0, "message": "success", "data": public_task(task)}), 201
-
-
-@api.route("/tasks/summary", methods=["GET", "OPTIONS"])
-def tasks_summary():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    requester_id = request.args.get("requesterId")
-    try:
-        limit = parse_int_arg("limit", 500) or 500
-    except ValueError as exc:
-        return error_response("BAD_REQUEST", str(exc), 400)
-    return jsonify({"code": 0, "message": "success", "data": summarize_tasks(requester_id, limit=limit)})
 
 
 @api.route("/tasks/<task_id>", methods=["GET", "OPTIONS"])

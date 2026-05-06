@@ -22,6 +22,8 @@ import {
   deleteImage,
   clearImages,
   storeImage,
+  getSettings as dbGetSettings,
+  putSettings as dbPutSettings,
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { getFalErrorMessage, getFalQueuedImageResult, getFalQueueStatus } from './lib/falAiImageApi'
@@ -214,8 +216,7 @@ export const useStore = create<AppState>()(
           incoming.model !== undefined ||
           incoming.timeout !== undefined ||
           incoming.apiMode !== undefined ||
-          incoming.codexCli !== undefined ||
-          incoming.apiProxy !== undefined
+          incoming.codexCli !== undefined
         const merged = normalizeSettings({ ...previous, ...incoming })
         if (hasLegacyOverrides && incoming.profiles === undefined) {
           merged.profiles = merged.profiles.map((profile) =>
@@ -229,12 +230,15 @@ export const useStore = create<AppState>()(
                   timeout: incoming.timeout ?? profile.timeout,
                   apiMode: incoming.apiMode === 'images' || incoming.apiMode === 'responses' ? incoming.apiMode : profile.apiMode,
                   codexCli: incoming.codexCli ?? profile.codexCli,
-                  apiProxy: incoming.apiProxy ?? profile.apiProxy,
                 }
               : profile,
           )
         }
-        return { settings: normalizeSettings(merged) }
+        const settings = normalizeSettings(merged)
+        void dbPutSettings(settings).catch((error) => {
+          console.error('Failed to persist settings to IndexedDB', error)
+        })
+        return { settings }
       }),
       dismissedCodexCliPrompts: [],
       dismissCodexCliPrompt: (key) => set((st) => ({
@@ -367,8 +371,17 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'gpt-image-playground',
+      merge: (persisted, current) => {
+        const persistedState = persisted as Partial<AppState> | null
+        if (!persistedState) return current
+        const { settings: _ignoredSettings, ...rest } = persistedState
+        return {
+          ...current,
+          ...rest,
+          settings: current.settings,
+        }
+      },
       partialize: (state) => ({
-        settings: state.settings,
         params: state.params,
         prompt: state.prompt,
         inputImages: state.inputImages.map((img) => ({ id: img.id, dataUrl: '' })),
@@ -611,6 +624,12 @@ async function applyLocalBackendTaskState(taskId: string) {
     return
   }
 
+  // Ignore stale poll ticks after a task has already settled locally.
+  if (localTask.status !== 'running') {
+    clearLocalTaskPollTimer(taskId)
+    return
+  }
+
   const remoteTask = await getImageTask(localTask.backendTaskId)
   if (remoteTask.status === 'queued' || remoteTask.status === 'running') {
     updateTaskInStore(taskId, {
@@ -752,6 +771,13 @@ export async function cancelBackendTask(task: TaskRecord) {
 
 /** 初始化：从 IndexedDB 加载任务和图片缓存，清理孤立图片 */
 export async function initStore() {
+  const storedSettings = await dbGetSettings()
+  if (storedSettings) {
+    useStore.getState().setSettings(storedSettings)
+  } else {
+    await dbPutSettings(useStore.getState().settings)
+  }
+
   const storedTasks = await getAllTasks()
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))

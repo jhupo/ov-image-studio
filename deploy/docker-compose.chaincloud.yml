@@ -3,10 +3,6 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,postgres,redis}
     image: ${IMAGE_STUDIO_IMAGE:-chaincloud-image-studio}:${IMAGE_STUDIO_TAG:-local}
     container_name: ${IMAGE_STUDIO_CONTAINER_NAME:-chaincloud-image-studio}
     depends_on:
@@ -16,8 +12,6 @@ services:
         condition: service_healthy
     environment:
       DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-http://127.0.0.1:8080/v1}
-      DEFAULT_API_URL: ${DEFAULT_API_URL:-http://127.0.0.1:8080/v1}
-      ENABLE_API_PROXY: ${ENABLE_API_PROXY:-false}
       IMAGE_STUDIO_PORT: ${IMAGE_STUDIO_PORT:-8787}
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}

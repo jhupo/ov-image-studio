@@ -136,10 +136,10 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
   const modal = (
     <div data-no-drag-select className="fixed inset-0 z-[72] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/45 backdrop-blur-sm animate-overlay-in" onClick={onClose} />
-      <div className="relative z-10 flex h-[86vh] w-[min(1120px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-gray-950/95 shadow-2xl ring-1 ring-white/10 animate-modal-in">
-        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-white/[0.08] px-6 py-5">
-          <h3 className="text-xl font-bold text-gray-100">提示词模板</h3>
-          <button onClick={onClose} className="rounded-full p-1.5 text-gray-400 transition hover:bg-white/[0.06] hover:text-gray-100" aria-label="关闭">
+      <div className="relative z-10 flex h-[86vh] w-[min(1120px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-white/50 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-gray-200/70 px-6 py-5 dark:border-white/[0.08]">
+          <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">提示词模板</h3>
+          <button onClick={onClose} className="rounded-full p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-100" aria-label="关闭">
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -156,12 +156,12 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="搜索模板、作者、分类、提示词..."
-                className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] py-2.5 pl-10 pr-9 text-sm text-gray-100 outline-none transition placeholder:text-gray-500 focus:border-blue-500/60 focus:bg-white/[0.06]"
+                className="w-full rounded-xl border border-gray-200/70 bg-white/80 py-2.5 pl-10 pr-9 text-sm text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:bg-white dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100 dark:placeholder:text-gray-500 dark:focus:border-blue-500/60 dark:focus:bg-white/[0.06]"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-500 transition hover:bg-white/[0.06] hover:text-gray-200"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
                   aria-label="清空搜索"
                 >
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -175,7 +175,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
               <button
                 key={category}
                 onClick={() => setActiveCategory(category)}
-                className={`shrink-0 rounded px-4 py-2 text-sm font-semibold transition ${activeCategory === category ? 'bg-blue-500 text-white' : 'bg-white/[0.04] text-gray-300 hover:bg-white/[0.08] hover:text-gray-100'}`}
+                className={`shrink-0 rounded px-4 py-2 text-sm font-semibold transition ${activeCategory === category ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.08] dark:hover:text-gray-100'}`}
               >
                 {categoryLabel(category)}
               </button>
@@ -185,17 +185,17 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
 
           <div className="min-h-0 flex-1 overflow-y-auto pr-1 custom-scrollbar">
             {loading ? (
-              <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-gray-400">正在加载模板...</div>
+              <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">正在加载模板...</div>
             ) : orderedVisibleTemplates.length ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {orderedVisibleTemplates.map((template) => (
-                  <article key={template.id} className="group overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.03] transition hover:border-blue-500/45">
-                    <div className="relative aspect-[16/10] w-full overflow-hidden bg-gray-900">
+                  <article key={template.id} className="group overflow-hidden rounded-lg border border-gray-200/70 bg-white/80 transition hover:border-blue-400/70 dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-blue-500/45">
+                    <div className="relative aspect-[16/10] w-full overflow-hidden bg-gray-100 dark:bg-gray-900">
                     <button type="button" onClick={() => setPreview(template)} className="block h-full w-full text-left">
                       {template.imageUrl ? (
                         <img src={template.imageUrl} alt={template.title} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-gray-900 text-sm font-semibold text-gray-500">
+                        <div className="flex h-full w-full items-center justify-center bg-gray-100 text-sm font-semibold text-gray-500 dark:bg-gray-900">
                           GPT Image 2
                         </div>
                       )}
@@ -212,14 +212,14 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                     </button>
                     </div>
                     <div className="space-y-3 p-3">
-                      <button type="button" onClick={() => setPreview(template)} className="line-clamp-1 text-left text-base font-bold text-gray-100" title={template.title}>
+                      <button type="button" onClick={() => setPreview(template)} className="line-clamp-1 text-left text-base font-bold text-gray-900 dark:text-gray-100" title={template.title}>
                         {template.title}
                       </button>
-                      <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-gray-300">{template.summary}</p>
-                      <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                      <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-gray-600 dark:text-gray-300">{template.summary}</p>
+                      <div className="flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-500">
                         <span className="min-w-0 truncate">{template.author || template.category}</span>
                         <div className="flex shrink-0 items-center gap-3">
-                          <button onClick={() => copyTemplate(template)} className="transition hover:text-gray-100">复制</button>
+                          <button onClick={() => copyTemplate(template)} className="transition hover:text-gray-900 dark:hover:text-gray-100">复制</button>
                           <button onClick={() => useTemplate(template)} className="font-semibold text-blue-400 transition hover:text-blue-300">使用</button>
                           <button onClick={() => useTemplateAndGenerate(template)} className="font-semibold text-green-400 transition hover:text-green-300">生成</button>
                         </div>
@@ -229,7 +229,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 ))}
               </div>
             ) : (
-              <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-gray-400">没有匹配的模板</div>
+              <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">没有匹配的模板</div>
             )}
           </div>
         </div>
@@ -237,31 +237,31 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
         {preview && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/76 p-5" onClick={() => setPreview(null)}>
             <div
-              className="grid max-h-full w-full max-w-5xl overflow-hidden rounded-2xl border border-white/[0.1] bg-gray-950 shadow-2xl ring-1 ring-white/[0.08] lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]"
+              className="grid max-h-full w-full max-w-5xl overflow-hidden rounded-2xl border border-white/50 bg-white shadow-2xl ring-1 ring-black/5 dark:border-white/[0.1] dark:bg-gray-950 dark:ring-white/[0.08] lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex min-h-[280px] items-center justify-center bg-black lg:min-h-[620px]">
+              <div className="flex min-h-[280px] items-center justify-center bg-gray-100 dark:bg-black lg:min-h-[620px]">
                 {preview.imageUrl ? (
                   <img src={preview.imageUrl} alt={preview.title} className="max-h-[72vh] w-full object-contain" />
                 ) : (
-                  <div className="flex h-full min-h-[360px] w-full items-center justify-center bg-gray-900 px-8 text-center text-xl font-bold text-gray-400">
+                  <div className="flex h-full min-h-[360px] w-full items-center justify-center bg-gray-100 px-8 text-center text-xl font-bold text-gray-500 dark:bg-gray-900 dark:text-gray-400">
                     {preview.title}
                   </div>
                 )}
               </div>
 
-              <aside className="flex min-h-0 flex-col border-t border-white/[0.08] bg-gray-950 lg:border-l lg:border-t-0">
-                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-white/[0.08] p-5">
+              <aside className="flex min-h-0 flex-col border-t border-gray-200/70 bg-white dark:border-white/[0.08] dark:bg-gray-950 lg:border-l lg:border-t-0">
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200/70 p-5 dark:border-white/[0.08]">
                   <div className="min-w-0">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                       <span className="rounded bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300">{getPromptCategoryLabel(preview.category)}</span>
                       {preview.author && <span className="text-xs text-gray-500">{preview.author}</span>}
                     </div>
-                    <h4 className="text-lg font-bold leading-snug text-gray-100">{preview.title}</h4>
+                    <h4 className="text-lg font-bold leading-snug text-gray-900 dark:text-gray-100">{preview.title}</h4>
                   </div>
                   <button
                     onClick={() => setPreview(null)}
-                    className="rounded-full p-1.5 text-gray-500 transition hover:bg-white/[0.06] hover:text-gray-100"
+                    className="rounded-full p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-white/[0.06] dark:hover:text-gray-100"
                     aria-label="关闭预览"
                   >
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -273,20 +273,20 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 custom-scrollbar">
                   <section>
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">效果说明</div>
-                    <p className="text-sm leading-6 text-gray-300">{preview.summary}</p>
+                    <p className="text-sm leading-6 text-gray-600 dark:text-gray-300">{preview.summary}</p>
                   </section>
                   <section>
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">完整提示词</div>
-                    <pre data-selectable-text className="max-h-64 whitespace-pre-wrap rounded-xl border border-white/[0.08] bg-white/[0.035] p-3 text-sm leading-6 text-gray-200 custom-scrollbar">
+                    <pre data-selectable-text className="box-border max-h-72 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-xl border border-gray-200/70 bg-gray-50 p-3 text-sm leading-6 text-gray-700 custom-scrollbar [overflow-wrap:anywhere] dark:border-white/[0.08] dark:bg-white/[0.035] dark:text-gray-200">
                       {preview.prompt}
                     </pre>
                   </section>
                 </div>
 
-                <div className="flex shrink-0 items-center justify-end gap-3 border-t border-white/[0.08] p-4">
+                <div className="flex shrink-0 items-center justify-end gap-3 border-t border-gray-200/70 p-4 dark:border-white/[0.08]">
                   <button
                     onClick={() => copyTemplate(preview)}
-                    className="rounded-lg border border-white/[0.08] px-4 py-2 text-sm font-medium text-gray-300 transition hover:bg-white/[0.06] hover:text-gray-100"
+                    className="rounded-lg border border-gray-200/70 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06] dark:hover:text-gray-100"
                   >
                     复制
                   </button>

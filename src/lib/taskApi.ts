@@ -52,16 +52,6 @@ export interface ImageTask {
   result?: ImageTaskResult | null
 }
 
-export interface ImageTaskSummary {
-  sampleSize: number
-  latestCreatedAt: number | null
-  byStatus: Partial<Record<ImageTask['status'], number>>
-  byErrorCategory: Record<string, number>
-  retrying: number
-  averageQueuedMs: number | null
-  averageRunningMs: number | null
-}
-
 async function parseResponse<T>(response: Response): Promise<T> {
   const payload = await response.json()
   if (!response.ok) {
@@ -101,18 +91,4 @@ export async function retryImageTask(taskId: string): Promise<ImageTask> {
     method: 'POST',
   })
   return parseResponse<ImageTask>(response)
-}
-
-export async function listImageTasks(limit = 30): Promise<{ items: ImageTask[]; nextBefore: number | null }> {
-  const response = await fetch(`/api/tasks?limit=${encodeURIComponent(String(limit))}`, {
-    method: 'GET',
-  })
-  return parseResponse<{ items: ImageTask[]; nextBefore: number | null }>(response)
-}
-
-export async function getImageTaskSummary(limit = 500): Promise<ImageTaskSummary> {
-  const response = await fetch(`/api/tasks/summary?limit=${encodeURIComponent(String(limit))}`, {
-    method: 'GET',
-  })
-  return parseResponse<ImageTaskSummary>(response)
 }
