@@ -1,10 +1,10 @@
-import type { ApiProfile, TaskParams } from '../types'
+import type { RuntimeApiProfile, TaskParams } from '../types'
 
 export interface ImageTaskRequest {
-  requesterId?: number | null
+  requesterId: string
   prompt: string
   params: TaskParams
-  profile: ApiProfile
+  profile: RuntimeApiProfile
   inputImageDataUrls: string[]
   maskDataUrl?: string
 }
@@ -18,7 +18,7 @@ export interface ImageTaskResult {
 
 export interface ImageTask {
   id: string
-  requesterId?: number | null
+  requesterId?: string | null
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
   queuePosition: number | null
   queuePositions?: {
@@ -72,22 +72,28 @@ export async function createImageTask(payload: ImageTaskRequest, idempotencyKey?
   return parseResponse<ImageTask>(response)
 }
 
-export async function getImageTask(taskId: string): Promise<ImageTask> {
-  const response = await fetch(`/api/tasks/${taskId}`, {
+function taskUrl(taskId: string, requesterId: string, includeResult = false) {
+  const params = new URLSearchParams({ requesterId })
+  if (includeResult) params.set('includeResult', '1')
+  return `/api/tasks/${encodeURIComponent(taskId)}?${params.toString()}`
+}
+
+export async function getImageTask(taskId: string, requesterId: string, includeResult = false): Promise<ImageTask> {
+  const response = await fetch(taskUrl(taskId, requesterId, includeResult), {
     method: 'GET',
   })
   return parseResponse<ImageTask>(response)
 }
 
-export async function cancelImageTask(taskId: string): Promise<ImageTask> {
-  const response = await fetch(`/api/tasks/${taskId}/cancel`, {
+export async function cancelImageTask(taskId: string, requesterId: string): Promise<ImageTask> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/cancel?requesterId=${encodeURIComponent(requesterId)}`, {
     method: 'POST',
   })
   return parseResponse<ImageTask>(response)
 }
 
-export async function retryImageTask(taskId: string): Promise<ImageTask> {
-  const response = await fetch(`/api/tasks/${taskId}/retry`, {
+export async function retryImageTask(taskId: string, requesterId: string): Promise<ImageTask> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/retry?requesterId=${encodeURIComponent(requesterId)}`, {
     method: 'POST',
   })
   return parseResponse<ImageTask>(response)

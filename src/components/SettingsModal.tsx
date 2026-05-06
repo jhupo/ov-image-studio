@@ -1,20 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
-import {
-  DEFAULT_IMAGES_MODEL,
-  DEFAULT_RESPONSES_MODEL,
-  DEFAULT_SETTINGS,
-  getActiveApiProfile,
-  normalizeSettings,
-} from '../lib/apiProfiles'
-import type { ApiProfile, AppSettings } from '../types'
+import { normalizeSettings } from '../lib/apiProfiles'
+import type { AppSettings } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { putSettings } from '../lib/db'
 import Select from './Select'
-
-function getDefaultModelForMode(apiMode: AppSettings['apiMode']) {
-  return apiMode === 'responses' ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL
-}
 
 function SectionTitle({
   icon,
@@ -26,21 +16,13 @@ function SectionTitle({
   return (
     <div className="flex items-center gap-2">
       <span className="flex h-5 w-5 items-center justify-center text-blue-500 dark:text-blue-400">{icon}</span>
-      <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
+      <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
     </div>
   )
 }
 
-function FieldLabel({
-  title,
-}: {
-  title: string
-}) {
-  return (
-    <div className="mb-2">
-      <div className="text-xs font-medium text-gray-700 dark:text-gray-200">{title}</div>
-    </div>
-  )
+function FieldLabel({ title }: { title: string }) {
+  return <div className="mb-1.5 text-xs font-medium text-gray-700 dark:text-gray-200">{title}</div>
 }
 
 function Toggle({
@@ -56,7 +38,7 @@ function Toggle({
     <button
       type="button"
       onClick={onChange}
-      className={`relative inline-flex h-[22px] w-10 shrink-0 items-center rounded-full transition-colors ${
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
         checked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
       }`}
       role="switch"
@@ -64,8 +46,8 @@ function Toggle({
       aria-label={label}
     >
       <span
-        className={`inline-block h-[18px] w-[18px] transform rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-5' : 'translate-x-0.5'
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-[18px]' : 'translate-x-0.5'
         }`}
       />
     </button>
@@ -92,7 +74,7 @@ function SlidersIcon() {
 
 function TerminalIcon() {
   return (
-    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 6h14v12H5z" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10l2 2-2 2M12 15h4" />
     </svg>
@@ -101,7 +83,7 @@ function TerminalIcon() {
 
 function UploadIcon() {
   return (
-    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 16V4m0 0L7 9m5-5l5 5M5 14v4h14v-4" />
     </svg>
   )
@@ -121,8 +103,6 @@ export default function SettingsModal() {
   const [saving, setSaving] = useState(false)
   const wasSettingsOpenRef = useRef(false)
 
-  const activeProfile = draft.profiles.find((profile) => profile.id === draft.activeProfileId) ?? getActiveApiProfile(draft)
-
   useEffect(() => {
     if (!showSettings) {
       wasSettingsOpenRef.current = false
@@ -135,44 +115,20 @@ export default function SettingsModal() {
     setDraft(normalizeSettings(settings))
   }, [showSettings, settings])
 
-  const patchActiveProfile = useCallback((patch: Partial<ApiProfile>) => {
-    setDraft((current) => normalizeSettings({
-      ...current,
-      profiles: current.profiles.map((profile) => {
-        if (profile.id !== current.activeProfileId) return profile
-        return { ...profile, ...patch }
-      }),
-    }))
-  }, [])
-
   const patchSettings = useCallback((patch: Partial<AppSettings>) => {
     setDraft((current) => normalizeSettings({ ...current, ...patch }))
   }, [])
 
   const saveSettings = useCallback(async () => {
     if (saving) return
-    const profile = draft.profiles.find((item) => item.id === draft.activeProfileId) ?? activeProfile
-    const apiKey = profile.apiKey.trim()
+    const apiKey = draft.apiKey.trim()
     if (!apiKey) {
       setApiKeyError('请先填写 API 凭证')
       showToast('请先填写 API 凭证', 'error')
       return
     }
 
-    const model = profile.model.trim() || getDefaultModelForMode(profile.apiMode ?? DEFAULT_SETTINGS.apiMode)
-    const nextSettings = normalizeSettings({
-      ...draft,
-      profiles: draft.profiles.map((item) =>
-        item.id === profile.id
-          ? {
-              ...item,
-              apiKey,
-              model,
-              codexCli: item.provider === 'openai' ? item.codexCli : false,
-            }
-          : item,
-      ),
-    })
+    const nextSettings = normalizeSettings({ ...draft, apiKey })
     try {
       setSaving(true)
       await putSettings(nextSettings)
@@ -185,7 +141,7 @@ export default function SettingsModal() {
     } finally {
       setSaving(false)
     }
-  }, [activeProfile, draft, saving, setSettings, setShowSettings, showToast])
+  }, [draft, saving, setSettings, setShowSettings, showToast])
 
   const handleCancel = useCallback(() => {
     setDraft(normalizeSettings(settings))
@@ -198,7 +154,7 @@ export default function SettingsModal() {
 
   if (!showSettings) return null
 
-  const apiMode = activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode
+  const hasEmbeddedKeys = embeddedSub2Api.active && embeddedSub2Api.apiKeys.length > 0
 
   return (
     <div data-no-drag-select className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -220,7 +176,7 @@ export default function SettingsModal() {
 
         <section className="rounded-2xl border border-gray-200/70 bg-white/45 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
           <FieldLabel title="API 凭证" />
-          {embeddedSub2Api.active && activeProfile.provider === 'openai' && embeddedSub2Api.apiKeys.length > 0 ? (
+          {hasEmbeddedKeys ? (
             <Select
               value={draft.embeddedApiKeyId != null ? String(draft.embeddedApiKeyId) : ''}
               onChange={(value) => {
@@ -228,12 +184,7 @@ export default function SettingsModal() {
                 const selectedApiKey = embeddedSub2Api.apiKeys.find((item) => item.id === selectedId)
                 if (!selectedApiKey) return
                 setApiKeyError(null)
-                patchSettings({ embeddedApiKeyId: selectedApiKey.id })
-                patchActiveProfile({
-                  provider: 'openai',
-                  baseUrl: embeddedSub2Api.origin || activeProfile.baseUrl,
-                  apiKey: selectedApiKey.key,
-                })
+                patchSettings({ embeddedApiKeyId: selectedApiKey.id, apiKey: selectedApiKey.key })
               }}
               options={embeddedSub2Api.apiKeys.map((item) => ({
                 label: item.status === 'active' ? item.name : `${item.name} (${item.status})`,
@@ -244,13 +195,13 @@ export default function SettingsModal() {
           ) : (
             <div className="relative">
               <input
-                value={activeProfile.apiKey}
+                value={draft.apiKey}
                 onChange={(event) => {
                   if (apiKeyError) setApiKeyError(null)
-                  patchActiveProfile({ apiKey: event.target.value })
+                  patchSettings({ apiKey: event.target.value, embeddedApiKeyId: null })
                 }}
                 type={showApiKey ? 'text' : 'password'}
-                placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
+                placeholder="sk-..."
                 className={`h-9 w-full rounded-xl border bg-white/60 px-3 pr-11 text-xs text-gray-700 outline-none transition dark:bg-white/[0.03] dark:text-gray-200 ${
                   apiKeyError
                     ? 'border-red-300 focus:border-red-400 dark:border-red-500/40'
@@ -286,20 +237,12 @@ export default function SettingsModal() {
           <div className="mt-4">
             <FieldLabel title="API 接口" />
             <Select
-              value={apiMode}
-              onChange={(value) => {
-                const nextApiMode = value as AppSettings['apiMode']
-                const nextModel =
-                  activeProfile.model === DEFAULT_IMAGES_MODEL || activeProfile.model === DEFAULT_RESPONSES_MODEL
-                    ? getDefaultModelForMode(nextApiMode)
-                    : activeProfile.model
-                patchActiveProfile({ apiMode: nextApiMode, model: nextModel })
-              }}
+              value={draft.apiMode}
+              onChange={(value) => patchSettings({ apiMode: value as AppSettings['apiMode'] })}
               options={[
                 { label: 'Images API (v1/images)', value: 'images' },
                 { label: 'Responses API (v1/responses)', value: 'responses' },
               ]}
-              disabled={activeProfile.provider !== 'openai'}
               className="h-9 rounded-xl border border-gray-200/70 bg-white/60 px-3 text-xs text-gray-800 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:border-blue-500/50"
             />
           </div>
@@ -311,32 +254,26 @@ export default function SettingsModal() {
           <SectionTitle icon={<SlidersIcon />} title="通用设置" />
         </div>
         <section className="overflow-hidden rounded-2xl border border-gray-200/70 bg-white/45 dark:border-white/[0.08] dark:bg-white/[0.03]">
-          <div className="flex min-h-[52px] items-center justify-between gap-4 px-4">
-            <div className="flex min-w-0 items-center gap-4">
+          <div className="flex min-h-[50px] items-center justify-between gap-4 px-4">
+            <div className="flex min-w-0 items-center gap-3">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-blue-500/40 text-blue-500 dark:text-blue-400">
                 <TerminalIcon />
               </span>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-gray-800 dark:text-gray-100">Codex CLI 兼容模式</div>
-                <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">启用后，将以 Codex CLI 兼容模式运行</div>
-              </div>
+              <div className="text-xs font-semibold text-gray-800 dark:text-gray-100">Codex CLI 兼容模式</div>
             </div>
             <Toggle
-              checked={activeProfile.codexCli}
-              onChange={() => patchActiveProfile({ codexCli: !activeProfile.codexCli })}
+              checked={draft.codexCli}
+              onChange={() => patchSettings({ codexCli: !draft.codexCli })}
               label="Codex CLI 兼容模式"
             />
           </div>
           <div className="border-t border-gray-200/70 dark:border-white/[0.08]" />
-          <div className="flex min-h-[52px] items-center justify-between gap-4 px-4">
-            <div className="flex min-w-0 items-center gap-4">
+          <div className="flex min-h-[50px] items-center justify-between gap-4 px-4">
+            <div className="flex min-w-0 items-center gap-3">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-blue-500 dark:text-blue-400">
                 <UploadIcon />
               </span>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-gray-800 dark:text-gray-100">提交后清空输入框</div>
-                <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">提交后自动清空输入框内容</div>
-              </div>
+              <div className="text-xs font-semibold text-gray-800 dark:text-gray-100">提交后清空输入框</div>
             </div>
             <Toggle
               checked={draft.clearInputAfterSubmit}

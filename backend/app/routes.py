@@ -48,6 +48,29 @@ def parse_int_arg(name: str, default: int | None = None) -> int | None:
         raise ValueError(f"{name} must be an integer") from exc
 
 
+def parse_requester_id_from_request() -> str:
+    return (
+        request.headers.get("X-Requester-Id")
+        or request.args.get("requesterId")
+        or ""
+    ).strip()
+
+
+def ensure_task_owner(task: dict, requester_id: str):
+    task_requester_id = str(task.get("requester_id") or "").strip()
+    if not task_requester_id:
+        return None
+    if not requester_id:
+        return error_response("FORBIDDEN", "Missing requester id", 403)
+    if task_requester_id != requester_id:
+        return error_response("NOT_FOUND", "Not found", 404)
+    return None
+
+
+def should_include_task_result() -> bool:
+    return request.args.get("includeResult", "").strip().lower() in {"1", "true", "yes"}
+
+
 def sub2api_origin() -> str:
     parsed = urlparse(DEFAULT_IMAGE_API_URL)
     if not parsed.scheme or not parsed.netloc:
@@ -118,6 +141,10 @@ def tasks_endpoint():
         return error_response("NOT_FOUND", "Not found", 404)
 
     payload = request.get_json(silent=True) or {}
+    requester_id = str(payload.get("requesterId") or "").strip()
+    if not requester_id:
+        return error_response("BAD_REQUEST", "requesterId is required", 400)
+    payload["requesterId"] = requester_id
     idempotency_key = request.headers.get("Idempotency-Key") or payload.get("idempotencyKey")
     if idempotency_key is not None:
         idempotency_key = str(idempotency_key).strip()
@@ -139,7 +166,10 @@ def task_detail(task_id: str):
     task = fetch_task(task_id)
     if not task:
         return error_response("NOT_FOUND", "Not found", 404)
-    return jsonify({"code": 0, "message": "success", "data": public_task(task)})
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
+    return jsonify({"code": 0, "message": "success", "data": public_task(task, include_result=should_include_task_result())})
 
 
 @api.route("/tasks/<task_id>/cancel", methods=["POST", "OPTIONS"])
@@ -149,6 +179,9 @@ def cancel_task(task_id: str):
     task = fetch_task(task_id)
     if not task:
         return error_response("NOT_FOUND", "Not found", 404)
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
     if task["status"] in TERMINAL_STATES:
         return jsonify({"code": 0, "message": "success", "data": public_task(task)})
     signal_task_cancel(task_id)
@@ -199,6 +232,9 @@ def retry_task(task_id: str):
     task = fetch_task(task_id)
     if not task:
         return error_response("NOT_FOUND", "Not found", 404)
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
     if task["status"] not in {"failed", "canceled"}:
         return error_response("BAD_REQUEST", "Only failed or canceled tasks can be retried", 400)
     if load_task_payload(task_id) is None:

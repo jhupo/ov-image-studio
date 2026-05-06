@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:full": "python backend/dev.py",
     "dev:server": "python backend/server.py",
+    "dev:worker": "python backend/worker.py",
     "build": "tsc -b && vite build",
     "start:server": "python backend/server.py",
     "preview": "vite preview",
@@ -14,7 +15,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@fal-ai/client": "^1.10.0",
     "fflate": "^0.8.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

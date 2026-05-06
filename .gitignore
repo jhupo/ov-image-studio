@@ -2,3 +2,7 @@ node_modules/
 dist/
 dev-proxy.config.json
 deploy/.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.codex-runtime/

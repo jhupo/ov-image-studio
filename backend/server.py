@@ -6,7 +6,6 @@ from app import create_app
 from app.config import PORT
 from app.queue import rebuild_queue_from_db
 from app.schema import ensure_schema
-from app.worker import start_workers
 
 
 app = create_app()
@@ -21,7 +20,6 @@ def initialize_runtime() -> None:
         return
     ensure_schema()
     rebuild_queue_from_db()
-    start_workers()
     runtime_started = True
 
 

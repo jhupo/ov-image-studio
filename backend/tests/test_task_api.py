@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from unittest import TestCase
+from unittest.mock import patch
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from app import create_app  # noqa: E402
+from app.tasks import public_task  # noqa: E402
+
+
+def task_row(**overrides):
+    row = {
+        "id": "task-1",
+        "requester_id": "client:one",
+        "status": "queued",
+        "priority": 0,
+        "retry_count": 0,
+        "max_retries": 2,
+        "error_code": None,
+        "error_message": None,
+        "created_at": 1000,
+        "updated_at": 1000,
+        "queued_at": 1000,
+        "available_at": 1000,
+        "started_at": None,
+        "finished_at": None,
+        "canceled_at": None,
+        "lease_owner": None,
+        "lease_expires_at": None,
+        "result_payload": None,
+    }
+    row.update(overrides)
+    return row
+
+
+class TaskRoutesTest(TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.client = self.app.test_client()
+
+    @patch("app.routes.create_task")
+    def test_create_task_requires_requester_id(self, create_task):
+        response = self.client.post("/api/tasks", json={"prompt": "hello"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["code"], "BAD_REQUEST")
+        create_task.assert_not_called()
+
+    @patch("app.routes.fetch_task")
+    def test_task_detail_hides_other_requesters_tasks(self, fetch_task):
+        fetch_task.return_value = task_row(requester_id="client:other")
+
+        response = self.client.get("/api/tasks/task-1?requesterId=client:one")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["code"], "NOT_FOUND")
+
+    @patch("app.tasks.redis_ttl_seconds", return_value=60)
+    @patch("app.tasks.queue_positions", return_value={"global": None, "user": None, "apiKey": None, "profile": None})
+    @patch("app.routes.fetch_task")
+    def test_task_detail_allows_matching_requester(self, fetch_task, _positions, _ttl):
+        fetch_task.return_value = task_row(status="running")
+
+        response = self.client.get("/api/tasks/task-1?requesterId=client:one")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()["data"]
+        self.assertEqual(payload["id"], "task-1")
+        self.assertEqual(payload["requesterId"], "client:one")
+
+    @patch("app.routes.queue_task")
+    @patch("app.routes.clear_task_cancel_signal")
+    @patch("app.routes.update_task")
+    @patch("app.routes.load_task_payload")
+    @patch("app.routes.fetch_task")
+    def test_retry_requires_same_requester(self, fetch_task, load_task_payload, update_task, clear_signal, queue_task):
+        fetch_task.return_value = task_row(status="failed", requester_id="client:other")
+        load_task_payload.return_value = {"prompt": "hello"}
+
+        response = self.client.post("/api/tasks/task-1/retry?requesterId=client:one")
+
+        self.assertEqual(response.status_code, 404)
+        update_task.assert_not_called()
+        clear_signal.assert_not_called()
+        queue_task.assert_not_called()
+
+
+class PublicTaskTest(TestCase):
+    @patch("app.tasks.redis_ttl_seconds", return_value=60)
+    @patch("app.tasks.queue_positions", return_value={"global": None, "user": None, "apiKey": None, "profile": None})
+    @patch("app.tasks.load_task_result")
+    def test_public_task_uses_summary_unless_result_is_requested(self, load_task_result, _positions, _ttl):
+        row = task_row(
+            status="succeeded",
+            result_payload={"imageCount": 2, "imagesStored": "redis_ttl"},
+            finished_at=3000,
+        )
+        load_task_result.return_value = {"images": ["data:image/png;base64,a", "data:image/png;base64,b"]}
+
+        summary = public_task(row)
+        full = public_task(row, include_result=True)
+
+        self.assertNotIn("images", summary["result"])
+        self.assertEqual(summary["result"]["imageCount"], 2)
+        self.assertEqual(full["result"]["images"], ["data:image/png;base64,a", "data:image/png;base64,b"])

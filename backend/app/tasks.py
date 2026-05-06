@@ -113,8 +113,10 @@ def redis_ttl_seconds(key: str) -> int | None:
     return ttl if ttl >= 0 else None
 
 
-def public_task(task: dict[str, Any]) -> dict[str, Any]:
-    result = load_task_result(task["id"]) if task["status"] == "succeeded" else None
+def public_task(task: dict[str, Any], include_result: bool = False) -> dict[str, Any]:
+    result = None
+    if include_result and task["status"] == "succeeded":
+        result = load_task_result(task["id"])
     if result is None:
         result = task.get("result_payload")
     if isinstance(result, str):

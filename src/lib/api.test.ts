@@ -98,7 +98,7 @@ describe('callImageApi', () => {
     }])
   })
 
-  it('uses the configured image API URL directly', async () => {
+  it('uses the runtime image API URL directly', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: [{ b64_json: 'aW1hZ2U=' }],
     }), {
@@ -110,7 +110,6 @@ describe('callImageApi', () => {
       settings: {
         ...DEFAULT_SETTINGS,
         apiKey: 'test-key',
-        imageApiBaseUrl: 'http://api.example.com/v1',
       },
       prompt: 'prompt',
       params: { ...DEFAULT_PARAMS },
@@ -118,7 +117,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.example.com/v1/images/generations',
+      expect.stringMatching(/\/images\/generations$/),
       expect.objectContaining({ method: 'POST' }),
     )
   })

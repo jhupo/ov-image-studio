@@ -30,6 +30,7 @@ from .tasks import (
     store_task_result,
     summarize_result_payload,
     update_task,
+    delete_task_payload,
 )
 from .timeutil import now_ms
 from .upstream import TaskExecutionError, call_openai_task
