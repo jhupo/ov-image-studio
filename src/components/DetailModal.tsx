@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, cancelBackendTask, getCurrentRequesterId } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, getCurrentRequesterId } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
@@ -7,7 +7,7 @@ import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } 
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getImageTaskEvents } from '../lib/taskApi'
 import type { BackendTaskEvent } from '../types'
-import { formatBackendPhase, formatBackendStatus, formatDurationMs, formatDurationSeconds, formatErrorCategory, formatQueueScopePositions, formatTaskEventType, getReadableTaskError, shortTaskId } from '../lib/taskDisplay'
+import { formatBackendPhase, formatBackendStatus, formatDurationSeconds, formatErrorCategory, formatTaskEventType, getReadableTaskError, shortTaskId } from '../lib/taskDisplay'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -204,7 +204,8 @@ export default function DetailModal() {
   const taskModel = task.apiModel || '未知'
   const showSourceInfo = Boolean(task.apiModel)
   const readableError = getReadableTaskError(task)
-  const scopedQueueLabels = formatQueueScopePositions(task.backendQueuePositions)
+  const canUseOutputActions = task.status === 'done' && outputLen > 0
+  const canDeleteTask = task.status !== 'running'
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -300,10 +301,6 @@ export default function DetailModal() {
   const handleRetry = () => {
     retryTask(task)
     setDetailTaskId(null)
-  }
-
-  const handleCancel = () => {
-    cancelBackendTask(task)
   }
 
   return (
@@ -591,16 +588,6 @@ export default function DetailModal() {
                   {task.backendRetryCount != null && task.backendMaxRetries != null && (
                     <span className="text-gray-400 dark:text-gray-500">重试 {task.backendRetryCount}/{task.backendMaxRetries}</span>
                   )}
-                  {task.backendTotalMs != null && (
-                    <span className="text-gray-400 dark:text-gray-500">总耗时 {formatDurationMs(task.backendTotalMs)}</span>
-                  )}
-                </div>
-                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-gray-400 dark:text-gray-500">
-                  {scopedQueueLabels.map((label) => <span key={label}>{label}</span>)}
-                  {task.backendQueuedMs != null && <span>排队 {formatDurationMs(task.backendQueuedMs)}</span>}
-                  {task.backendRunningMs != null && <span>运行 {formatDurationMs(task.backendRunningMs)}</span>}
-                  {task.backendPayloadTtlSeconds != null && <span>输入缓存 {formatDurationSeconds(task.backendPayloadTtlSeconds)}</span>}
-                  {task.backendResultTtlSeconds != null && <span>结果缓存 {formatDurationSeconds(task.backendResultTtlSeconds)}</span>}
                   {task.backendErrorCategory && <span>{formatErrorCategory(task.backendErrorCategory)}</span>}
                   {task.backendErrorCode && <span className="max-w-full truncate" title={task.backendErrorCode}>{task.backendErrorCode}</span>}
                 </div>
@@ -690,7 +677,6 @@ export default function DetailModal() {
             {/* 时间 */}
             <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">
               <span>创建于 {formatTime(task.createdAt)}</span>
-              {formatDuration() && <span> · 耗时 {formatDuration()}</span>}
             </div>
           </div>
 
@@ -705,34 +691,26 @@ export default function DetailModal() {
               </svg>
               复用配置
             </button>
-            <button
-              onClick={handleEdit}
-              disabled={!outputLen}
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-green-50 px-2.5 text-xs font-medium text-green-600 transition hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
-            >
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-              编辑输出
-            </button>
-            <button
-              onClick={handleDelete}
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-red-50 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
-            >
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              删除记录
-            </button>
-            {task.status === 'running' && task.backendTaskId && (
+            {canUseOutputActions && (
               <button
-                onClick={handleCancel}
+                onClick={handleEdit}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-green-50 px-2.5 text-xs font-medium text-green-600 transition hover:bg-green-100 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
+              >
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                编辑输出
+              </button>
+            )}
+            {canDeleteTask && (
+              <button
+                onClick={handleDelete}
                 className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-red-50 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
               >
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
-                取消任务
+                删除记录
               </button>
             )}
             <button
