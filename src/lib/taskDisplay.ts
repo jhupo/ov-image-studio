@@ -125,11 +125,7 @@ export function formatQueueScopePositions(queuePositions?: {
   profile?: number | null
 } | null) {
   if (!queuePositions) return []
-  return [
-    queuePositions.user ? `同用户 #${queuePositions.user}` : '',
-    queuePositions.apiKey ? `同 Key #${queuePositions.apiKey}` : '',
-    queuePositions.profile ? `同配置 #${queuePositions.profile}` : '',
-  ].filter(Boolean)
+  return queuePositions.user ? [`当前队列 #${queuePositions.user}`] : []
 }
 
 export function formatTaskEventType(type?: string | null) {

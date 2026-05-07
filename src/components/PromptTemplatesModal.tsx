@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { fetchPromptTemplates, getPromptCategoryLabel, type PromptTemplate } from '../lib/promptTemplates'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
-import { submitTask, useStore } from '../store'
+import { useStore } from '../store'
 
 interface PromptTemplatesModalProps {
   onClose: () => void
@@ -96,15 +96,6 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
     setPrompt(template.prompt)
     showToast('已填入提示词', 'success')
     onClose()
-  }
-
-  const useTemplateAndGenerate = (template: PromptTemplate) => {
-    rememberTemplate(template)
-    setPrompt(template.prompt)
-    onClose()
-    window.setTimeout(() => {
-      void submitTask()
-    }, 0)
   }
 
   const toggleFavorite = (template: PromptTemplate) => {
@@ -221,7 +212,6 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                         <div className="flex shrink-0 items-center gap-3">
                           <button onClick={() => copyTemplate(template)} className="transition hover:text-gray-900 dark:hover:text-gray-100">复制</button>
                           <button onClick={() => useTemplate(template)} className="font-semibold text-blue-400 transition hover:text-blue-300">使用</button>
-                          <button onClick={() => useTemplateAndGenerate(template)} className="font-semibold text-green-400 transition hover:text-green-300">生成</button>
                         </div>
                       </div>
                     </div>
@@ -296,12 +286,6 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                   >
                     使用
                   </button>
-                  <button
-                    onClick={() => useTemplateAndGenerate(preview)}
-                    className="rounded-lg bg-green-500 px-5 py-2 text-sm font-bold text-white transition hover:bg-green-400"
-                  >
-                    套用并生成
-                  </button>
                 </div>
               </aside>
             </div>
@@ -313,3 +297,4 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
 
   return createPortal(modal, document.body)
 }
+

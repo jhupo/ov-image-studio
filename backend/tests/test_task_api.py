@@ -132,6 +132,16 @@ class PublicTaskTest(TestCase):
         self.assertEqual(summary["result"]["imageCount"], 2)
         self.assertEqual(full["result"]["images"], ["data:image/png;base64,a", "data:image/png;base64,b"])
 
+    @patch("app.tasks.redis_ttl_seconds", return_value=60)
+    @patch("app.tasks.queue_positions", return_value={"global": 8, "user": 2, "apiKey": 5, "profile": 7})
+    def test_public_task_exposes_user_queue_position_only(self, _positions, _ttl):
+        row = task_row(status="queued")
+
+        payload = public_task(row)
+
+        self.assertEqual(payload["queuePosition"], 2)
+        self.assertEqual(payload["queuePositions"], {"user": 2})
+
 
 class TaskEventsTest(TestCase):
     @patch("app.tasks.now_ms", return_value=1234)

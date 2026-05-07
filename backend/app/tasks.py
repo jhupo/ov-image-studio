@@ -123,12 +123,13 @@ def public_task(task: dict[str, Any], include_result: bool = False) -> dict[str,
         result = json.loads(result)
     metrics = task_phase_metrics(task)
     positions = queue_positions(task)
+    public_queue_position = positions["user"]
     return {
         "id": task["id"],
         "requesterId": task.get("requester_id"),
         "status": task["status"],
-        "queuePosition": positions["global"],
-        "queuePositions": positions,
+        "queuePosition": public_queue_position,
+        "queuePositions": {"user": public_queue_position},
         "priority": task.get("priority", 0),
         "retryCount": task.get("retry_count", 0),
         "maxRetries": task.get("max_retries", 0),
