@@ -1,10 +1,10 @@
-import type { ApiProfile, TaskParams } from '../types'
+import type { BackendTaskEvent, RuntimeApiProfile, TaskParams } from '../types'
 
 export interface ImageTaskRequest {
-  requesterId?: number | null
+  requesterId: string
   prompt: string
   params: TaskParams
-  profile: ApiProfile
+  profile: RuntimeApiProfile
   inputImageDataUrls: string[]
   maskDataUrl?: string
 }
@@ -18,20 +18,36 @@ export interface ImageTaskResult {
 
 export interface ImageTask {
   id: string
-  requesterId?: number | null
+  requesterId?: string | null
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
   queuePosition: number | null
+  queuePositions?: {
+    global?: number | null
+    user?: number | null
+    apiKey?: number | null
+    profile?: number | null
+  } | null
   priority?: number
   retryCount?: number
   maxRetries?: number
   errorCode?: string | null
+  errorCategory?: string | null
   createdAt: number
   updatedAt: number
   queuedAt?: number | null
+  availableAt?: number | null
   startedAt: number | null
   finishedAt: number | null
   canceledAt?: number | null
+  leaseOwner?: string | null
   leaseExpiresAt?: number | null
+  phase?: 'queued' | 'retry_waiting' | 'running' | 'succeeded' | 'failed' | 'canceled' | string | null
+  phaseStartedAt?: number | null
+  queuedMs?: number | null
+  runningMs?: number | null
+  totalMs?: number | null
+  payloadTtlSeconds?: number | null
+  resultTtlSeconds?: number | null
   error: string | null
   result?: ImageTaskResult | null
 }
@@ -44,34 +60,49 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return payload.data as T
 }
 
-export async function createImageTask(payload: ImageTaskRequest): Promise<ImageTask> {
+export async function createImageTask(payload: ImageTaskRequest, idempotencyKey?: string): Promise<ImageTask> {
   const response = await fetch('/api/tasks', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
     body: JSON.stringify(payload),
   })
   return parseResponse<ImageTask>(response)
 }
 
-export async function getImageTask(taskId: string): Promise<ImageTask> {
-  const response = await fetch(`/api/tasks/${taskId}`, {
+function taskUrl(taskId: string, requesterId: string, includeResult = false) {
+  const params = new URLSearchParams({ requesterId })
+  if (includeResult) params.set('includeResult', '1')
+  return `/api/tasks/${encodeURIComponent(taskId)}?${params.toString()}`
+}
+
+export async function getImageTask(taskId: string, requesterId: string, includeResult = false): Promise<ImageTask> {
+  const response = await fetch(taskUrl(taskId, requesterId, includeResult), {
     method: 'GET',
   })
   return parseResponse<ImageTask>(response)
 }
 
-export async function cancelImageTask(taskId: string): Promise<ImageTask> {
-  const response = await fetch(`/api/tasks/${taskId}/cancel`, {
+export async function cancelImageTask(taskId: string, requesterId: string): Promise<ImageTask> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/cancel?requesterId=${encodeURIComponent(requesterId)}`, {
     method: 'POST',
   })
   return parseResponse<ImageTask>(response)
 }
 
-export async function retryImageTask(taskId: string): Promise<ImageTask> {
-  const response = await fetch(`/api/tasks/${taskId}/retry`, {
+export async function retryImageTask(taskId: string, requesterId: string): Promise<ImageTask> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/retry?requesterId=${encodeURIComponent(requesterId)}`, {
     method: 'POST',
   })
   return parseResponse<ImageTask>(response)
+}
+
+export async function getImageTaskEvents(taskId: string, requesterId: string): Promise<BackendTaskEvent[]> {
+  const params = new URLSearchParams({ requesterId })
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/events?${params.toString()}`, {
+    method: 'GET',
+  })
+  return parseResponse<BackendTaskEvent[]>(response)
 }

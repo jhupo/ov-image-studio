@@ -1,9 +1,12 @@
-import type { TaskRecord, StoredImage } from '../types'
+import type { AppSettings, TaskRecord, StoredImage } from '../types'
+import { normalizeSettings } from './apiProfiles'
 
 const DB_NAME = 'gpt-image-playground'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
+const STORE_SETTINGS = 'settings'
+const SETTINGS_KEY = 'app'
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -15,6 +18,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_IMAGES)) {
         db.createObjectStore(STORE_IMAGES, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
+        db.createObjectStore(STORE_SETTINGS, { keyPath: 'id' })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -37,6 +43,33 @@ function dbTransaction<T>(
         req.onerror = () => reject(req.error)
       }),
   )
+}
+
+// ===== Settings =====
+
+interface StoredSettingsRecord {
+  id: typeof SETTINGS_KEY
+  value: Partial<AppSettings>
+  updatedAt: number
+}
+
+export async function getSettings(): Promise<AppSettings | undefined> {
+  const record = await dbTransaction<StoredSettingsRecord | undefined>(STORE_SETTINGS, 'readonly', (s) => s.get(SETTINGS_KEY))
+  return record ? normalizeSettings(record.value) : undefined
+}
+
+export function putSettings(settings: AppSettings): Promise<IDBValidKey> {
+  return dbTransaction(STORE_SETTINGS, 'readwrite', (s) => s.put({
+    id: SETTINGS_KEY,
+    value: {
+      apiKey: settings.apiKey,
+      apiMode: settings.apiMode,
+      codexCli: settings.codexCli,
+      clearInputAfterSubmit: settings.clearInputAfterSubmit,
+      embeddedApiKeyId: settings.embeddedApiKeyId,
+    },
+    updatedAt: Date.now(),
+  }))
 }
 
 // ===== Tasks =====

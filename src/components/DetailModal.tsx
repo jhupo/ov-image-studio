@@ -1,10 +1,13 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, cancelBackendTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, getCurrentRequesterId } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
+import { getImageTaskEvents } from '../lib/taskApi'
+import type { BackendTaskEvent } from '../types'
+import { formatBackendPhase, formatBackendStatus, formatDurationSeconds, formatErrorCategory, formatTaskEventType, getReadableTaskError, shortTaskId } from '../lib/taskDisplay'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -22,6 +25,9 @@ export default function DetailModal() {
   const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
   const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
+  const [taskEvents, setTaskEvents] = useState<BackendTaskEvent[]>([])
+  const [taskEventsLoading, setTaskEventsLoading] = useState(false)
+  const [taskEventsError, setTaskEventsError] = useState('')
   const [now, setNow] = useState(Date.now())
   const imagePanelRef = useRef<HTMLDivElement>(null)
   const mainImageRef = useRef<HTMLImageElement>(null)
@@ -40,11 +46,42 @@ export default function DetailModal() {
   }, [detailTaskId])
 
   useEffect(() => {
-    if (task?.status !== 'running' && !(task?.status === 'error' && task.falRecoverable)) return
+    if (task?.status !== 'running') return
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     setNow(Date.now())
     return () => window.clearInterval(id)
-  }, [task?.falRecoverable, task?.status])
+  }, [task?.status])
+
+  useEffect(() => {
+    let cancelled = false
+    setTaskEvents([])
+    setTaskEventsError('')
+    if (!task?.backendTaskId) return
+
+    const loadEvents = async (showLoading: boolean) => {
+      if (showLoading) setTaskEventsLoading(true)
+      try {
+        const events = await getImageTaskEvents(task.backendTaskId!, getCurrentRequesterId())
+        if (!cancelled) {
+          setTaskEvents(events)
+          setTaskEventsError('')
+        }
+      } catch (error) {
+        if (!cancelled) setTaskEventsError(error instanceof Error ? error.message : String(error))
+      } finally {
+        if (!cancelled) setTaskEventsLoading(false)
+      }
+    }
+
+    void loadEvents(true)
+    const timer = task.status === 'running'
+      ? window.setInterval(() => void loadEvents(false), 3000)
+      : null
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearInterval(timer)
+    }
+  }, [task?.backendTaskId, task?.status, task?.backendStatus, task?.backendFinishedAt, task?.backendRetryCount])
 
   // 加载所有相关图片
   useEffect(() => {
@@ -164,12 +201,11 @@ export default function DetailModal() {
   const hasHandledPromptWarning = settings.codexCli || dismissedCodexCliPrompts.includes(codexCliPromptKey)
   const showPromptWarning = Boolean(currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt) && !hasHandledPromptWarning)
   const aggregateActualParams = outputLen > 0 ? { ...task.actualParams, n: outputLen } : task.actualParams
-  const taskProvider = task.apiProvider
-  const taskProviderName = taskProvider === 'fal' ? 'fal.ai' : taskProvider ? 'OpenAI' : '未知'
-  const taskProfileName = task.apiProfileName || '未知'
   const taskModel = task.apiModel || '未知'
-  const showSourceInfo = Boolean(task.apiProvider || task.apiProfileName || task.apiModel)
-  const isFalReconnecting = task.status === 'error' && task.falRecoverable
+  const showSourceInfo = Boolean(task.apiModel)
+  const readableError = getReadableTaskError(task)
+  const canUseOutputActions = task.status === 'done' && outputLen > 0
+  const canDeleteTask = task.status !== 'running'
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -177,7 +213,7 @@ export default function DetailModal() {
   }
 
   const formatDuration = () => {
-    if (task.status === 'running' || isFalReconnecting) {
+    if (task.status === 'running') {
       const seconds = Math.max(0, Math.floor((now - task.createdAt) / 1000))
       const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
       const ss = String(seconds % 60).padStart(2, '0')
@@ -221,7 +257,7 @@ export default function DetailModal() {
   }
 
   const handleCopyError = async () => {
-    const errorText = task.error || '生成失败'
+    const errorText = readableError
     try {
       await copyTextToClipboard(errorText)
       showToast('完整报错已复制', 'success')
@@ -267,10 +303,6 @@ export default function DetailModal() {
     setDetailTaskId(null)
   }
 
-  const handleCancel = () => {
-    cancelBackendTask(task)
-  }
-
   return (
     <div
       data-no-drag-select
@@ -279,7 +311,7 @@ export default function DetailModal() {
     >
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
       <div
-        className="relative bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-white/50 dark:border-white/[0.08] rounded-3xl shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col md:flex-row z-10 ring-1 ring-black/5 dark:ring-white/10 animate-modal-in"
+        className="relative flex max-h-[90vh] w-full max-w-5xl min-w-0 flex-col overflow-hidden rounded-3xl border border-white/50 bg-white/90 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/90 dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] dark:ring-white/10 md:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex h-14 items-center justify-end px-4 md:hidden">
@@ -295,7 +327,7 @@ export default function DetailModal() {
         </div>
 
         {/* 左侧：图片 */}
-        <div ref={imagePanelRef} className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
+        <div ref={imagePanelRef} className="relative flex h-64 w-full flex-shrink-0 items-center justify-center bg-gray-100 dark:bg-black/20 md:h-auto md:min-w-0 md:flex-[1_1_52%]">
           {task.status === 'done' && outputLen > 0 && currentOutputImageSrc && (
             <>
               <img
@@ -368,7 +400,7 @@ export default function DetailModal() {
               )}
             </>
           )}
-          {(task.status === 'running' || isFalReconnecting) && (
+          {task.status === 'running' && (
             <>
               <div className="absolute left-4 top-4 flex items-center gap-1 bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -384,15 +416,7 @@ export default function DetailModal() {
               )}
             </>
           )}
-          {task.status === 'error' && isFalReconnecting && (
-            <div className="w-full max-w-md px-4 text-center">
-              <svg className="w-10 h-10 text-yellow-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <p className="text-sm font-medium text-yellow-500">重连中</p>
-            </div>
-          )}
-          {task.status === 'error' && !isFalReconnecting && (
+          {task.status === 'error' && (
             <div className="w-full max-w-md px-4 text-center">
               <svg className="w-10 h-10 text-red-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -405,7 +429,7 @@ export default function DetailModal() {
                   WebkitLineClamp: 4,
                 }}
               >
-                {task.error || '生成失败'}
+                {readableError}
               </p>
               <div className="mt-3 flex items-center justify-center gap-2">
                 <button
@@ -437,7 +461,7 @@ export default function DetailModal() {
         </div>
 
         {/* 右侧：信息 */}
-        <div className="md:w-1/2 w-full p-5 overflow-y-auto flex flex-col">
+        <div className="flex w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden p-5 md:flex-[0_1_48%]">
           <button
             onClick={() => setDetailTaskId(null)}
             className="absolute top-3 right-3 hidden p-1 rounded-full hover:bg-gray-100 dark:hover:bg-white/[0.06] transition text-gray-400 z-10 md:block"
@@ -448,7 +472,7 @@ export default function DetailModal() {
             </svg>
           </button>
 
-          <div data-selectable-text className="flex-1">
+          <div data-selectable-text className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 mb-2">
               <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
                 输入内容
@@ -479,7 +503,7 @@ export default function DetailModal() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap mb-4">
+            <p className="min-w-0 break-words text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap mb-4">
               {task.prompt || '(无提示词)'}
             </p>
             {showRevisedPrompt && currentRevisedPrompt && (
@@ -545,30 +569,74 @@ export default function DetailModal() {
               参数配置
             </h3>
             {showSourceInfo && (
-              <div className="mb-2 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
+              <div className="mb-2 min-w-0 overflow-hidden rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
                 <span className="text-gray-400 dark:text-gray-500">来源</span>
                 <br />
-                <span className="font-medium text-gray-700 dark:text-gray-200">{taskProviderName}</span>
-                <span className="text-gray-400 dark:text-gray-500"> · {taskProfileName} · {taskModel}</span>
+                <span className="font-medium text-gray-700 dark:text-gray-200">OpenAI</span>
+                <span className="break-all text-gray-400 dark:text-gray-500"> · {taskModel}</span>
               </div>
             )}
             {task.backendTaskId && (
-              <div className="mb-2 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
+              <div className="mb-2 min-w-0 overflow-hidden rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
                 <span className="text-gray-400 dark:text-gray-500">后端任务</span>
-                <br />
-                <span className="font-medium text-gray-700 dark:text-gray-200">
-                  {task.backendStatus === 'queued'
-                    ? task.backendQueuePosition
-                      ? `排队 #${task.backendQueuePosition}`
-                      : '排队中'
-                    : task.backendStatus || 'running'}
-                </span>
-                {task.backendRetryCount != null && task.backendMaxRetries != null && (
-                  <span className="text-gray-400 dark:text-gray-500"> · 重试 {task.backendRetryCount}/{task.backendMaxRetries}</span>
-                )}
-                {task.backendErrorCode && (
-                  <span className="text-gray-400 dark:text-gray-500"> · {task.backendErrorCode}</span>
-                )}
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="min-w-0 max-w-full truncate font-mono text-gray-700 dark:text-gray-200" title={task.backendTaskId}>{shortTaskId(task.backendTaskId)}</span>
+                  <span className="font-medium text-gray-700 dark:text-gray-200">
+                    {formatBackendPhase(task.backendPhase) || formatBackendStatus(task.backendStatus)}
+                    {task.backendQueuePosition ? ` #${task.backendQueuePosition}` : ''}
+                  </span>
+                  {task.backendRetryCount != null && task.backendMaxRetries != null && (
+                    <span className="text-gray-400 dark:text-gray-500">重试 {task.backendRetryCount}/{task.backendMaxRetries}</span>
+                  )}
+                  {task.backendErrorCategory && <span>{formatErrorCategory(task.backendErrorCategory)}</span>}
+                  {task.backendErrorCode && <span className="max-w-full truncate" title={task.backendErrorCode}>{task.backendErrorCode}</span>}
+                </div>
+                <div className="mt-3 border-t border-gray-200/70 pt-2 dark:border-white/[0.08]">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="font-medium text-gray-500 dark:text-gray-400">任务时间线</span>
+                    {taskEventsLoading && <span className="text-gray-400 dark:text-gray-500">加载中</span>}
+                  </div>
+                  {taskEventsError && (
+                    <div className="rounded-md bg-red-50 px-2 py-1 text-red-500 dark:bg-red-500/10 dark:text-red-300">
+                      {taskEventsError}
+                    </div>
+                  )}
+                  {!taskEventsError && taskEvents.length === 0 && !taskEventsLoading && (
+                    <div className="text-gray-400 dark:text-gray-500">暂无事件</div>
+                  )}
+                  {!taskEventsError && taskEvents.length > 0 && (
+                    <div className="min-w-0 space-y-1.5">
+                      {taskEvents.slice(-12).map((event) => (
+                        <div key={event.id} className="flex gap-2">
+                          <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-blue-400" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <span className="font-medium text-gray-700 dark:text-gray-200">{formatTaskEventType(event.type)}</span>
+                              <span className="text-gray-400 dark:text-gray-500">{formatTime(event.createdAt)}</span>
+                              {event.metadata?.retryCount != null && (
+                                <span className="text-gray-400 dark:text-gray-500">重试 {event.metadata.retryCount}</span>
+                              )}
+                              {event.metadata?.delaySeconds != null && (
+                                <span className="text-gray-400 dark:text-gray-500">等待 {formatDurationSeconds(Number(event.metadata.delaySeconds))}</span>
+                              )}
+                              {event.metadata?.imageCount != null && (
+                                <span className="text-gray-400 dark:text-gray-500">{event.metadata.imageCount} 张</span>
+                              )}
+                              {event.metadata?.errorCode && (
+                                <span className="text-gray-400 dark:text-gray-500">{String(event.metadata.errorCode)}</span>
+                              )}
+                            </div>
+                            {event.message && (
+                              <div className="mt-0.5 max-w-full truncate text-gray-400 dark:text-gray-500" title={event.message}>
+                                {event.message}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             <div className="grid grid-cols-2 gap-2 text-xs mb-4">
@@ -609,61 +677,52 @@ export default function DetailModal() {
             {/* 时间 */}
             <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">
               <span>创建于 {formatTime(task.createdAt)}</span>
-              {formatDuration() && <span> · 耗时 {formatDuration()}</span>}
             </div>
           </div>
 
           {/* 操作按钮 */}
-          <div className="grid grid-cols-4 sm:flex gap-2 pt-4 border-t border-gray-100 dark:border-white/[0.08]">
+          <div className="-mx-1 flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4 dark:border-white/[0.08]">
             <button
               onClick={handleReuse}
-              className="col-span-2 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition text-sm font-medium whitespace-nowrap"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-2.5 text-xs font-medium text-blue-600 transition hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20"
             >
               <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
               </svg>
               复用配置
             </button>
-            <button
-              onClick={handleEdit}
-              disabled={!outputLen}
-              className="col-span-2 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium whitespace-nowrap"
-            >
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-              编辑输出
-            </button>
-            <button
-              onClick={handleDelete}
-              className="col-span-3 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 transition text-sm font-medium whitespace-nowrap"
-            >
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              删除记录
-            </button>
-            {task.status === 'running' && task.backendTaskId && (
+            {canUseOutputActions && (
               <button
-                onClick={handleCancel}
-                className="col-span-4 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 transition text-sm font-medium whitespace-nowrap"
+                onClick={handleEdit}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-green-50 px-2.5 text-xs font-medium text-green-600 transition hover:bg-green-100 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
               >
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
-                取消任务
+                编辑输出
+              </button>
+            )}
+            {canDeleteTask && (
+              <button
+                onClick={handleDelete}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-red-50 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
+              >
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                删除记录
               </button>
             )}
             <button
               onClick={handleToggleFavorite}
-              className={`col-span-1 sm:flex-none sm:w-11 w-full flex items-center justify-center rounded-xl transition ${
+              className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg transition ${
                 task.isFavorite
                   ? 'bg-yellow-50 text-yellow-500 hover:bg-yellow-100 dark:bg-yellow-500/10 dark:hover:bg-yellow-500/20'
                   : 'bg-gray-50 text-gray-400 hover:bg-yellow-50 hover:text-yellow-500 dark:bg-white/[0.04] dark:hover:bg-yellow-500/10'
               }`}
               title={task.isFavorite ? '取消收藏' : '收藏记录'}
             >
-              <svg className="w-5 h-5" fill={task.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill={task.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
               </svg>
             </button>

@@ -1,217 +1,74 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_BASE_URL,
-  DEFAULT_FAL_BASE_URL,
-  DEFAULT_FAL_MODEL,
+  DEFAULT_IMAGE_API_BASE_URL,
   DEFAULT_IMAGES_MODEL,
-  DEFAULT_OPENAI_PROFILE_ID,
+  DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
+  getRuntimeApiProfile,
   mergeImportedSettings,
+  normalizeSettings,
+  validateSettings,
 } from './apiProfiles'
 
-describe('mergeImportedSettings', () => {
-  it('replaces the default OpenAI profile with legacy imported settings when current settings are untouched', () => {
-    const merged = mergeImportedSettings(DEFAULT_SETTINGS, {
-      baseUrl: DEFAULT_BASE_URL,
-      apiKey: 'imported-key',
-      model: 'imported-model',
-      timeout: 120,
+describe('settings normalization', () => {
+  it('keeps only user settings fields', () => {
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      apiKey: 'sk-test',
       apiMode: 'responses',
       codexCli: true,
-      apiProxy: true,
+      clearInputAfterSubmit: true,
+      embeddedApiKeyId: 12,
+      baseUrl: 'https://legacy.example/v1',
+      model: 'legacy-model',
     })
 
-    expect(merged.profiles).toHaveLength(1)
-    expect(merged.activeProfileId).toBe(DEFAULT_OPENAI_PROFILE_ID)
-    expect(merged.profiles[0]).toMatchObject({
-      id: DEFAULT_OPENAI_PROFILE_ID,
-      provider: 'openai',
-      baseUrl: DEFAULT_BASE_URL,
-      apiKey: 'imported-key',
-      model: 'imported-model',
-      timeout: 120,
+    expect(settings).toEqual({
+      apiKey: 'sk-test',
       apiMode: 'responses',
       codexCli: true,
-      apiProxy: true,
+      clearInputAfterSubmit: true,
+      embeddedApiKeyId: 12,
     })
   })
 
-  it('replaces the default provider list with imported profiles when current settings are untouched', () => {
-    const merged = mergeImportedSettings(DEFAULT_SETTINGS, {
+  it('can read an OpenAI key from legacy profile exports', () => {
+    const settings = normalizeSettings({
       profiles: [
-        {
-          id: 'imported-openai',
-          name: 'Imported OpenAI',
-          provider: 'openai',
-          baseUrl: 'https://api.example.com/v1',
-          apiKey: 'openai-key',
-          model: DEFAULT_IMAGES_MODEL,
-          timeout: 300,
-          apiMode: 'images',
-          codexCli: false,
-          apiProxy: false,
-        },
-        {
-          id: 'imported-fal',
-          name: 'Imported fal',
-          provider: 'fal',
-          baseUrl: DEFAULT_FAL_BASE_URL,
-          apiKey: 'fal-key',
-          model: DEFAULT_FAL_MODEL,
-          timeout: 300,
-          apiMode: 'images',
-          codexCli: false,
-          apiProxy: false,
-        },
+        { id: 'fal', provider: 'fal', apiKey: 'fal-key', apiMode: 'images', codexCli: false },
+        { id: 'openai', provider: 'openai', apiKey: 'openai-key', apiMode: 'responses', codexCli: true },
       ],
-      activeProfileId: 'imported-fal',
+      activeProfileId: 'openai',
     })
 
-    expect(merged.profiles.map((profile) => profile.id)).toEqual(['imported-openai', 'imported-fal'])
-    expect(merged.activeProfileId).toBe('imported-fal')
+    expect(settings.apiKey).toBe('openai-key')
+    expect(settings.apiMode).toBe('responses')
+    expect(settings.codexCli).toBe(true)
   })
 
-  it('deduplicates imported profiles when replacing untouched default settings', () => {
-    const merged = mergeImportedSettings(DEFAULT_SETTINGS, {
-      profiles: [
-        {
-          id: 'imported-openai-a',
-          name: 'Imported OpenAI A',
-          provider: 'openai',
-          baseUrl: 'https://api.example.com/v1',
-          apiKey: 'openai-key',
-          model: DEFAULT_IMAGES_MODEL,
-          timeout: 300,
-          apiMode: 'images',
-          codexCli: false,
-          apiProxy: false,
-        },
-        {
-          id: 'imported-openai-b',
-          name: 'Imported OpenAI B',
-          provider: 'openai',
-          baseUrl: 'https://api.example.com/v1/',
-          apiKey: 'openai-key',
-          model: DEFAULT_IMAGES_MODEL,
-          timeout: 600,
-          apiMode: 'images',
-          codexCli: true,
-          apiProxy: true,
-        },
-      ],
-      activeProfileId: 'imported-openai-b',
-    })
+  it('builds runtime profile from user settings and environment defaults', () => {
+    const imagesProfile = getRuntimeApiProfile({ apiKey: 'sk-test', apiMode: 'images' })
+    const responsesProfile = getRuntimeApiProfile({ apiKey: 'sk-test', apiMode: 'responses' })
 
-    expect(merged.profiles).toHaveLength(1)
-    expect(merged.profiles[0].id).toBe('imported-openai-a')
-    expect(merged.activeProfileId).toBe('imported-openai-a')
-  })
-
-  it('appends imported legacy settings as a new profile when current settings are customized', () => {
-    const current = mergeImportedSettings(DEFAULT_SETTINGS, {
-      baseUrl: 'https://current.example.com/v1',
-      apiKey: 'current-key',
-      model: 'current-model',
-    })
-    const merged = mergeImportedSettings(current, {
-      baseUrl: 'https://imported.example.com/v1',
-      apiKey: 'imported-key',
-      model: 'imported-model',
-    })
-
-    expect(merged.profiles).toHaveLength(2)
-    expect(merged.activeProfileId).toBe(DEFAULT_OPENAI_PROFILE_ID)
-    expect(merged.profiles[0]).toMatchObject({ apiKey: 'current-key', model: 'current-model' })
-    expect(merged.profiles[1]).toMatchObject({
+    expect(imagesProfile).toMatchObject({
       provider: 'openai',
-      baseUrl: DEFAULT_BASE_URL,
-      apiKey: 'imported-key',
-      model: 'imported-model',
+      apiKey: 'sk-test',
+      baseUrl: DEFAULT_IMAGE_API_BASE_URL,
+      imageApiBaseUrl: DEFAULT_IMAGE_API_BASE_URL,
+      model: DEFAULT_IMAGES_MODEL,
     })
-    expect(merged.profiles[1].id).not.toBe(DEFAULT_OPENAI_PROFILE_ID)
+    expect(responsesProfile.model).toBe(DEFAULT_RESPONSES_MODEL)
   })
 
-  it('appends imported profiles as new profiles when current settings are customized', () => {
-    const current = mergeImportedSettings(DEFAULT_SETTINGS, {
-      baseUrl: 'https://current.example.com/v1',
+  it('keeps current key when imported settings have no key', () => {
+    expect(mergeImportedSettings({ apiKey: 'current-key' }, { apiMode: 'responses' })).toMatchObject({
       apiKey: 'current-key',
-      model: 'current-model',
+      apiMode: 'responses',
     })
-    const merged = mergeImportedSettings(current, {
-      profiles: [
-        {
-          id: 'imported-openai',
-          name: 'Imported OpenAI',
-          provider: 'openai',
-          baseUrl: 'https://imported.example.com/v1',
-          apiKey: 'imported-key',
-          model: DEFAULT_IMAGES_MODEL,
-          timeout: 300,
-          apiMode: 'images',
-          codexCli: false,
-          apiProxy: false,
-        },
-        {
-          id: 'imported-fal',
-          name: 'Imported fal',
-          provider: 'fal',
-          baseUrl: DEFAULT_FAL_BASE_URL,
-          apiKey: 'fal-key',
-          model: DEFAULT_FAL_MODEL,
-          timeout: 300,
-          apiMode: 'images',
-          codexCli: false,
-          apiProxy: false,
-        },
-      ],
-      activeProfileId: 'imported-fal',
-    })
-
-    expect(merged.profiles).toHaveLength(3)
-    expect(merged.activeProfileId).toBe(DEFAULT_OPENAI_PROFILE_ID)
-    expect(merged.profiles[0]).toMatchObject({ apiKey: 'current-key', model: 'current-model' })
-    expect(merged.profiles[1]).toMatchObject({ name: 'Imported OpenAI', provider: 'openai', apiKey: 'imported-key' })
-    expect(merged.profiles[2]).toMatchObject({ name: 'Imported fal', provider: 'fal', apiKey: 'fal-key' })
-    expect(new Set(merged.profiles.map((profile) => profile.id)).size).toBe(3)
   })
 
-  it('skips imported profiles that already exist in current customized settings', () => {
-    const current = mergeImportedSettings(DEFAULT_SETTINGS, {
-      baseUrl: 'https://current.example.com/v1',
-      apiKey: 'current-key',
-      model: 'current-model',
-    })
-    const merged = mergeImportedSettings(current, {
-      profiles: [
-        {
-          id: 'duplicate-openai',
-          name: 'Duplicate OpenAI',
-          provider: 'openai',
-          baseUrl: 'https://current.example.com/v1/',
-          apiKey: 'current-key',
-          model: 'current-model',
-          timeout: 600,
-          apiMode: 'images',
-          codexCli: true,
-          apiProxy: true,
-        },
-        {
-          id: 'new-fal',
-          name: 'New fal',
-          provider: 'fal',
-          baseUrl: DEFAULT_FAL_BASE_URL,
-          apiKey: 'fal-key',
-          model: DEFAULT_FAL_MODEL,
-          timeout: 300,
-          apiMode: 'images',
-          codexCli: false,
-          apiProxy: false,
-        },
-      ],
-    })
-
-    expect(merged.profiles).toHaveLength(2)
-    expect(merged.profiles[0]).toMatchObject({ apiKey: 'current-key', model: 'current-model' })
-    expect(merged.profiles[1]).toMatchObject({ provider: 'fal', apiKey: 'fal-key', model: DEFAULT_FAL_MODEL })
+  it('validates required API key', () => {
+    expect(validateSettings({ apiKey: '' })).toBe('缺少 API Key')
+    expect(validateSettings({ apiKey: 'sk-test' })).toBeNull()
   })
 })

@@ -5,14 +5,24 @@ from urllib.parse import urlparse
 import requests
 from flask import Blueprint, jsonify, request
 
+from .cancellation import clear_task_cancel_signal, signal_task_cancel
 from .config import (
     DEFAULT_IMAGE_API_URL,
     DELAYED_QUEUE_KEY,
+    CLEANUP_INTERVAL_SECONDS,
+    CANCEL_POLL_INTERVAL_SECONDS,
+    CANCEL_TTL_SECONDS,
     MAX_CONCURRENT_GLOBAL,
     MAX_CONCURRENT_PER_KEY,
     MAX_CONCURRENT_PER_PROFILE,
     MAX_CONCURRENT_PER_USER,
+    MAX_RETRIES,
+    PAYLOAD_TTL_SECONDS,
     QUEUE_KEY,
+    RESULT_TTL_SECONDS,
+    TASK_EVENT_TTL_SECONDS,
+    TASK_METADATA_TTL_SECONDS,
+    TASK_TIMEOUT_SECONDS,
     TERMINAL_STATES,
     WORKER_COUNT,
     WORKER_ID,
@@ -21,13 +31,13 @@ from .db import check_db, check_redis, redis_client
 from .queue import promote_delayed_tasks, queue_task, remove_task_from_queues
 from .tasks import (
     create_task,
-    delete_task_payload,
     delete_task_result,
     fetch_task,
-    list_tasks,
     load_task_payload,
+    list_task_events,
     public_task,
     update_task,
+    append_task_event,
 )
 from .timeutil import now_ms
 
@@ -47,6 +57,29 @@ def parse_int_arg(name: str, default: int | None = None) -> int | None:
         return int(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+
+
+def parse_requester_id_from_request() -> str:
+    return (
+        request.headers.get("X-Requester-Id")
+        or request.args.get("requesterId")
+        or ""
+    ).strip()
+
+
+def ensure_task_owner(task: dict, requester_id: str):
+    task_requester_id = str(task.get("requester_id") or "").strip()
+    if not task_requester_id:
+        return None
+    if not requester_id:
+        return error_response("FORBIDDEN", "Missing requester id", 403)
+    if task_requester_id != requester_id:
+        return error_response("NOT_FOUND", "Not found", 404)
+    return None
+
+
+def should_include_task_result() -> bool:
+    return request.args.get("includeResult", "").strip().lower() in {"1", "true", "yes"}
 
 
 def sub2api_origin() -> str:
@@ -106,6 +139,18 @@ def health():
                     "perKey": MAX_CONCURRENT_PER_KEY,
                     "perProfile": MAX_CONCURRENT_PER_PROFILE,
                 },
+                "config": {
+                    "workerCount": WORKER_COUNT,
+                    "maxRetries": MAX_RETRIES,
+                    "taskTimeoutSeconds": TASK_TIMEOUT_SECONDS,
+                    "payloadTtlSeconds": PAYLOAD_TTL_SECONDS,
+                    "resultTtlSeconds": RESULT_TTL_SECONDS,
+                    "cancelTtlSeconds": CANCEL_TTL_SECONDS,
+                    "cancelPollIntervalSeconds": CANCEL_POLL_INTERVAL_SECONDS,
+                    "taskMetadataTtlSeconds": TASK_METADATA_TTL_SECONDS,
+                    "taskEventTtlSeconds": TASK_EVENT_TTL_SECONDS,
+                    "cleanupIntervalSeconds": CLEANUP_INTERVAL_SECONDS,
+                },
             },
         }
     ), status
@@ -116,20 +161,13 @@ def tasks_endpoint():
     if request.method == "OPTIONS":
         return ("", 204)
     if request.method == "GET":
-        requester_id = request.args.get("requesterId")
-        status = request.args.get("status")
-        if status and status not in VALID_TASK_STATUSES:
-            return error_response("BAD_REQUEST", "Invalid task status", 400)
-        try:
-            limit = parse_int_arg("limit", 200) or 200
-            before = parse_int_arg("before")
-        except ValueError as exc:
-            return error_response("BAD_REQUEST", str(exc), 400)
-        items = [public_task(task) for task in list_tasks(requester_id, status=status, limit=limit, before=before)]
-        next_before = items[-1]["createdAt"] if len(items) == max(1, min(limit, 500)) else None
-        return jsonify({"code": 0, "message": "success", "data": {"items": items, "nextBefore": next_before}})
+        return error_response("NOT_FOUND", "Not found", 404)
 
     payload = request.get_json(silent=True) or {}
+    requester_id = str(payload.get("requesterId") or "").strip()
+    if not requester_id:
+        return error_response("BAD_REQUEST", "requesterId is required", 400)
+    payload["requesterId"] = requester_id
     idempotency_key = request.headers.get("Idempotency-Key") or payload.get("idempotencyKey")
     if idempotency_key is not None:
         idempotency_key = str(idempotency_key).strip()
@@ -151,7 +189,27 @@ def task_detail(task_id: str):
     task = fetch_task(task_id)
     if not task:
         return error_response("NOT_FOUND", "Not found", 404)
-    return jsonify({"code": 0, "message": "success", "data": public_task(task)})
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
+    return jsonify({"code": 0, "message": "success", "data": public_task(task, include_result=should_include_task_result())})
+
+
+@api.route("/tasks/<task_id>/events", methods=["GET", "OPTIONS"])
+def task_events(task_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    task = fetch_task(task_id)
+    if not task:
+        return error_response("NOT_FOUND", "Not found", 404)
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
+    try:
+        limit = parse_int_arg("limit", 50) or 50
+    except ValueError as exc:
+        return error_response("BAD_REQUEST", str(exc), 400)
+    return jsonify({"code": 0, "message": "success", "data": list_task_events(task_id, limit)})
 
 
 @api.route("/tasks/<task_id>/cancel", methods=["POST", "OPTIONS"])
@@ -161,10 +219,14 @@ def cancel_task(task_id: str):
     task = fetch_task(task_id)
     if not task:
         return error_response("NOT_FOUND", "Not found", 404)
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
     if task["status"] in TERMINAL_STATES:
         return jsonify({"code": 0, "message": "success", "data": public_task(task)})
+    signal_task_cancel(task_id)
+    append_task_event(task_id, "cancel_requested")
     remove_task_from_queues(task_id)
-    delete_task_payload(task_id)
     delete_task_result(task_id)
     update_task(
         task_id,
@@ -211,6 +273,9 @@ def retry_task(task_id: str):
     task = fetch_task(task_id)
     if not task:
         return error_response("NOT_FOUND", "Not found", 404)
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
     if task["status"] not in {"failed", "canceled"}:
         return error_response("BAD_REQUEST", "Only failed or canceled tasks can be retried", 400)
     if load_task_payload(task_id) is None:
@@ -231,5 +296,7 @@ def retry_task(task_id: str):
         lease_owner=None,
         lease_expires_at=None,
     )
+    clear_task_cancel_signal(task_id)
     queue_task(task_id)
+    append_task_event(task_id, "retry_requested")
     return jsonify({"code": 0, "message": "success", "data": public_task(fetch_task(task_id))})

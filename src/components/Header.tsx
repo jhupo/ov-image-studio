@@ -1,12 +1,10 @@
 import { useState } from 'react'
 import { useStore } from '../store'
-import { useVersionCheck } from '../hooks/useVersionCheck'
 import HelpModal from './HelpModal'
 import PromptTemplatesModal from './PromptTemplatesModal'
 
 export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
-  const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
   const [showHelp, setShowHelp] = useState(false)
   const [showPromptTemplates, setShowPromptTemplates] = useState(false)
 
@@ -25,18 +23,6 @@ export default function Header() {
               <span className="text-[11px] font-medium leading-tight text-gray-500 dark:text-gray-400">一站式 API 中转与调度服务</span>
             </a>
           </h1>
-          {hasUpdate && latestRelease && (
-            <a
-              href={latestRelease.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={dismiss}
-              className="px-1.5 py-0.5 mt-0.5 rounded border border-red-500/30 text-[10px] font-bold bg-red-500 text-white hover:bg-red-600 transition-colors animate-fade-in leading-none"
-              title={`新版本 ${latestRelease.tag}`}
-            >
-              NEW
-            </a>
-          )}
         </div>
         <div className="flex items-center gap-1">
           <button

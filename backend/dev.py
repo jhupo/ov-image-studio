@@ -16,10 +16,11 @@ def spawn(command: list[str]) -> subprocess.Popen:
 
 def main() -> int:
     backend = spawn([sys.executable, "backend/server.py"])
+    worker = spawn([sys.executable, "backend/worker.py"])
     client = spawn(["cmd", "/c", "npm", "run", "dev"] if os.name == "nt" else ["npm", "run", "dev"])
 
     def shutdown(*_args):
-        for proc in (backend, client):
+        for proc in (backend, worker, client):
             if proc.poll() is None:
                 proc.terminate()
 
@@ -27,8 +28,8 @@ def main() -> int:
     signal.signal(signal.SIGTERM, shutdown)
 
     try:
-        backend.wait()
-        client.wait()
+        for proc in (backend, worker, client):
+            proc.wait()
     finally:
         shutdown()
     return 0

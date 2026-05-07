@@ -1,226 +1,246 @@
-# GPT Image Playground
+# ChainCloud Image Studio
 
-基于 OpenAI 图像生成接口的图片生成与编辑工具。提供简洁精美的 Web UI，支持文本生图、参考图与遮罩编辑，数据纯本地化存储，带来流畅的历史记录与参数管理体验。
+ChainCloud Image Studio 是一个面向 ChainCloud/Sub2API 场景的图片生成与编辑工作台。前端负责交互、任务历史和本地图片缓存；后端负责长耗时图片任务的排队、执行、重试、取消和状态观测。
 
-> 若需调用非 HTTPS 的内网或本地 HTTP API，请使用 GitHub Pages 版本或自行部署，Vercel 部署的体验版绑定的 `.dev` 域名因安全策略通常要求接口必须为 HTTPS。
+当前主链路是：
 
-[**🌐 Vercel 在线体验**](https://gpt-image-playground.cooksleep.dev) &nbsp;|&nbsp; [**🌐 GitHub Pages 在线体验**](https://cooksleep.github.io/gpt_image_playground)
-
----
-
-## 📸 界面预览
-
-<details>
-<summary><b>点击展开截图展示</b></summary>
-<br>
-
-<div align="center">
-  <b>桌面端主界面</b><br>
-  <img src="docs/images/example_pc_1.png" alt="桌面端主界面" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>任务详情与实际参数</b><br>
-  <img src="docs/images/example_pc_2.png" alt="任务详情与实际参数" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>桌面端批量选择</b><br>
-  <img src="docs/images/example_pc_3.png" alt="桌面端批量选择" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>移动端主界面</b><br>
-  <img src="docs/images/example_mb_1.jpg" alt="移动端主界面" width="420" />
-</div>
-
-<br>
-
-<div align="center">
-  <b>移动端侧滑多选</b><br>
-  <img src="docs/images/example_mb_2.jpg" alt="移动端侧滑多选" width="420" />
-</div>
-
-</details>
-
----
-
-## ✨ 核心特性
-
-### 🎨 强大的图像生成与编辑
-- **双模接口支持**：自由切换使用常规 `Images API` (`/v1/images`) 或 `Responses API` (`/v1/responses`)。
-- **参考图与遮罩**：支持上传最多 16 张参考图（支持剪贴板和拖拽）。内置可视化遮罩编辑器，自动预处理以符合官方分辨率限制。
-- **批量与迭代**：支持单次多图生成；一键将满意结果转为参考图，无缝开启下一轮修改。
-
-### ⚙️ 精细化参数追踪
-- **智能尺寸控制**：提供 1K/2K/4K 快速预设，自定义宽高时会自动规整至模型安全范围（16 的倍数、总像素校验等）。
-- **实际参数对比**：自动提取 API 响应中真实生效的尺寸、质量、耗时以及**模型改写后的提示词**，与你的请求参数高亮对比。
-
-### 📁 高效历史管理 (纯本地)
-- **瀑布流与画廊**：历史任务自动保存，支持按状态过滤、全屏大图预览与快捷下载。
-- **快捷批量操作**：桌面端支持鼠标拖拽框选、Ctrl/⌘ 连选，移动端支持顺滑侧滑多选；轻松实现批量收藏与清理。
-- **极致性能与隐私**：所有记录与图片均存放在浏览器 IndexedDB 中（采用 SHA-256 去重压缩），不经过任何第三方服务器。支持一键打包导出 ZIP 备份。
-
-### 🔌 API 兼容增强
-- **Codex CLI 兼容模式**：专为非标准 API (如 Codex CLI) 打造。开启后自动固定无效参数，将 Images API 的多图请求拆分为并发单图。
-- **提示词防改写**：Responses API 会始终在请求文本前加入强制指令防止提示词被改写；开启 Codex CLI 模式后，Images API 也会获得同等保护。
-
----
-
-## 🚀 部署与使用
-
-支持多种部署与开发方式。无论使用哪种方式，你都可以预设默认的 API 节点。
-
-<details>
-<summary><strong>▲ 方式一：Vercel 一键部署 (推荐)</strong></summary>
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FCookSleep%2Fgpt_image_playground&project-name=gpt-image-playground&repository-name=gpt-image-playground)
-
-点击上方按钮导入仓库即可，Vercel 会自动执行构建并部署静态文件。
-
-**配置默认 API URL**：在 Vercel 项目的 **Settings → Environment Variables** 中添加 `VITE_DEFAULT_API_URL`（如 `https://api.openai.com/v1`），然后重新部署即可生效。
-
-**配置自动更新**：
-
-本项目已在 `vercel.json` 中关闭了默认的自动部署。若需在同步 GitHub 上游代码后自动更新 Vercel 部署：
-
-1. 在 Vercel 项目设置 **Settings -> Git** 的 **Deploy Hooks** 中创建一个名为 `Release` 的 Hook（Branch 填 `main`）并复制生成的 URL。
-2. 在你 Fork 的 GitHub 仓库设置 **Settings -> Secrets and variables -> Actions** 中，新建 Secret `VERCEL_DEPLOY_HOOK`，填入刚才的 URL。
-
-此后，每次在 GitHub 点击 **Sync fork** 同步上游，都会自动触发 Vercel 构建部署最新版。
-
-</details>
-
-<details>
-<summary><strong>🐳 方式二：Docker 部署</strong></summary>
-
-官方镜像已发布至 GitHub Container Registry。Docker 部署支持在运行时注入默认配置。
-
-**环境变量说明：**
-
-- `DEFAULT_API_URL`：设置页面上默认显示的 API 地址。
-- `API_PROXY_URL`：配置内置代理实际转发到的目标 API 地址（仅开启代理时有效）。
-- `ENABLE_API_PROXY`：设为 `true` 开启容器内置 Nginx 同源代理，用于解决浏览器跨域（CORS）限制。开启后，浏览器将请求同源的 `/api-proxy/`，再由 Nginx 转发至 `API_PROXY_URL`。
-- `HOST` / `PORT`：指定容器内 Nginx 监听的地址和端口（默认 `0.0.0.0:80`）。
-
-> ⚠️ **安全警告**：开启 API 代理后，任何人都能将你的服务器作为代理来请求目标 API。建议仅在有访问控制（如 IP 白名单）或本地网络中开启。
-
-> 💡 **兼容迁移**：旧版本中的 `API_URL` 已拆分为 `DEFAULT_API_URL` 和 `API_PROXY_URL`。容器启动时会自动将遗留的 `API_URL` 作为两个新变量的兜底值，实现无缝兼容。建议更新配置文件，逐步迁移至新变量。
-
-**1. Docker CLI 示例**
-
-```bash
-docker run -d -p 8080:80 \
-  -e DEFAULT_API_URL=https://api.openai.com/v1 \
-  -e ENABLE_API_PROXY=true \
-  -e API_PROXY_URL=https://api.openai.com/v1 \
-  ghcr.io/cooksleep/gpt_image_playground:latest
+```text
+Browser
+  -> Nginx
+  -> Flask /api/*
+  -> Postgres task metadata
+  -> Redis payload/result/queue
+  -> Worker
+  -> DEFAULT_IMAGE_API_URL
 ```
 
-*(注：使用 host 网络时加 `--network host`，修改容器监听端口使用 `-e PORT=28080`)*
+前端不会直接请求内网图片接口，也不再使用旧的 `/api-proxy`。所有生成任务都通过本应用 `/api/*` 后端进入队列，worker 再请求 `DEFAULT_IMAGE_API_URL`。
 
-**2. Docker Compose 示例**
+## 功能
 
-```yaml
-services:
-  gpt-image-playground:
-    image: ghcr.io/cooksleep/gpt_image_playground:latest
-    environment:
-      - DEFAULT_API_URL=https://api.openai.com/v1
-    ports:
-      - "8080:80"
-    restart: unless-stopped
+- 文本生图、参考图编辑、遮罩编辑。
+- Images API 与 Responses API 两种接口模式。
+- 后端任务队列，避免浏览器长连接等待上游图片接口。
+- 任务卡片展示队列、运行、重试、失败原因、后端任务 ID、耗时阶段。
+- 按 requesterId 限制任务详情、取消和重试访问。
+- 幂等提交，降低刷新或重复点击造成重复任务的概率。
+- 失败原因中文映射。
+- Redis 保存短期 payload/result，Postgres 保存任务元数据。
+- 前端 IndexedDB 保存用户设置、任务历史和图片数据。
+- 支持嵌入 Sub2API：URL 携带 `user_id` 和 `token` 后，前端通过 `/api/embedded/keys` 获取该用户 keys。
+- 提示词模板、收藏、最近使用和主题跟随。
+
+## 架构说明
+
+```text
+Cloudflare Tunnel / browser
+  |
+  v
+Nginx :80
+  |-- /      static frontend
+  |-- /api/* Flask 127.0.0.1:8787
+                  |
+                  | task metadata
+                  v
+              Postgres
+                  |
+                  | queue + payload/result
+                  v
+               Redis
+                  |
+                  v
+              Worker process
+                  |
+                  v
+        DEFAULT_IMAGE_API_URL
 ```
 
-**更新说明：**
+`/api/*` 必须保留，它是本应用后端接口，不是上游图片 API 代理。Nginx 当前只承担两个职责：托管前端静态文件，以及把同域 `/api/*` 转发给本机 Flask。Flask 可以只监听容器内或本机地址，由 Nginx/Cloudflare Tunnel 对外承接入口。
 
-使用 `latest` 标签时，重新拉取镜像并重启即可更新（如 `docker compose pull && docker compose up -d`）。若需固定版本可使用官方提供的版本号标签（如 `0.2.x`）。
+Web 和 Worker 已经拆成独立进程：
 
-</details>
+- `app` service：Nginx + Flask，只接收前端请求和读写任务元数据。
+- `worker` service：运行 `backend/worker.py`，消费 Redis 队列并请求上游图片 API。
 
-<details>
-<summary><strong>💻 方式三：本地开发与静态构建</strong></summary>
+轮询任务状态只读取 Postgres/Redis，不会重新触发 worker，也不会重复请求上游。
 
-**1. 环境准备与启动**
+## 本地开发
 
-你可以在项目根目录新建 `.env.local` 文件配置默认 API URL（如 `VITE_DEFAULT_API_URL=https://api.openai.com/v1`）。然后安装依赖并启动：
+安装依赖：
 
 ```bash
 npm install
+```
+
+只启动前端：
+
+```bash
 npm run dev
 ```
 
-**2. 本地开发跨域代理 (可选)**
-
-如果在本地开发时遇到浏览器的 CORS 限制，可开启本地代理转发：
+启动 Flask 后端和 worker：
 
 ```bash
-cp dev-proxy.config.example.json dev-proxy.config.json
+npm run dev:server
+npm run dev:worker
 ```
 
-修改 `dev-proxy.config.json`，将 `target` 设置为真实的图片接口地址。重启开发服务器后，在页面设置中开启 **API 代理** 即可（请求将被转发如 `http://localhost:5173/api-proxy/... -> target/...`）。此功能仅在 `npm run dev` 阶段生效，不会影响打包产物。
-
-**3. 构建静态产物**
+也可以一次启动前端、Flask 和 worker：
 
 ```bash
+npm run dev:full
+```
+
+本地 Vite 会把 `/api` 转发到 `http://127.0.0.1:8787`。如果只启动前端，页面可以打开，但后端任务队列相关能力不可用；如果只启动 Flask、不启动 worker，任务可以创建和排队，但不会被消费执行。
+
+测试和构建：
+
+```bash
+npm test
+python -m unittest discover backend/tests
 npm run build
 ```
 
-构建输出的文件位于 `dist/` 目录下，可将其部署至任何静态文件服务器（如普通 Nginx、GitHub Pages、Netlify 等）。
+## Docker 部署
 
-</details>
+复制环境变量示例：
 
----
-
-## 🛠️ API 配置与 URL 传参
-
-点击页面右上角的 **设置 (⚙️)**，可以配置模型、密钥与其他参数。
-
-- **双接口模式**：支持 `Images API` (需填写 GPT Image 模型，如 `gpt-image-2`) 和 `Responses API` (需填写支持该工具的文本模型，如 `gpt-5.5`)。
-- **API 代理**：开启后，浏览器将请求同源的 `/api-proxy/` 路径，交由当前部署环境（Docker 或 本地开发）代理转发至真实 API，以绕开浏览器 CORS 限制。
-- **Codex CLI 模式**：如果你在使用源于 Codex CLI 的 API，可以在 `API URL` 右侧开启该模式。开启后会禁用不支持的 `quality` 参数，Images API 的多图生成也将改为并发单图请求。此外，提示词文本开头会加入简短的防改写指令，防止模型偏离原意。（注：Responses API 无论是否开启此模式，都会默认加入防改写指令）。
-- **智能诊断提示**：当应用检测到接口返回的提示词被强制改写，或缺少官方 API 常规返回的参数时，会主动提示你是否针对当前配置组合开启 Codex CLI 模式。
-
-### URL 传参快速填充
-
-应用支持通过 URL 查询参数快速填入配置，非常适合创建书签或集成分享：
-
-- `?apiUrl=https://你的代理地址.com`
-- `?apiKey=sk-xxxx`
-- `?apiMode=images` 或 `?apiMode=responses`（未传时默认为 `images`）
-- `?codexCli=true`（强制开启 Codex CLI 模式）
-
-例如，集成到 New API 的聊天系统：
-
-```text
-https://gpt-image-playground.cooksleep.dev?apiUrl={address}&apiKey={key}
+```bash
+cd deploy
+cp .env.example .env
 ```
 
-```text
-https://cooksleep.github.io/gpt_image_playground?apiUrl={address}&apiKey={key}
+启动：
+
+```bash
+docker compose -f docker-compose.chaincloud.yml up -d --build
 ```
 
----
+默认服务：
 
-## 💻 技术栈
+- 应用入口：`http://<server>:80`
+- Flask：容器内 `127.0.0.1:8787`
+- Postgres：容器内 `postgres:5432`
+- Redis：容器内 `redis:6379`
+- Worker：独立 `worker` service
 
-- **前端框架**：[React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
-- **构建工具**：[Vite](https://vite.dev/)
-- **样式方案**：[Tailwind CSS 3](https://tailwindcss.com/)
-- **状态管理**：[Zustand](https://zustand.docs.pmnd.rs/)
+## 环境变量
 
-## 📄 许可证 & 致谢
+主要变量在 `deploy/.env.example` 维护。
 
-本项目基于 [MIT License](LICENSE) 开源。
+| 变量 | 说明 |
+| --- | --- |
+| `IMAGE_STUDIO_IMAGE` | Docker 镜像名 |
+| `IMAGE_STUDIO_TAG` | Docker 镜像标签 |
+| `IMAGE_STUDIO_HTTP_PORT` | Nginx 对外端口 |
+| `DEFAULT_IMAGE_API_URL` | worker 实际请求的 OpenAI-compatible/Sub2API 地址 |
+| `IMAGE_STUDIO_PORT` | Flask 内部监听端口 |
+| `POSTGRES_DSN` | Flask/worker 连接 Postgres 的 DSN |
+| `REDIS_URL` | Flask/worker 连接 Redis 的地址 |
+| `IMAGE_STUDIO_WORKER_COUNT` | worker 线程数 |
+| `IMAGE_STUDIO_MAX_CONCURRENT` | 全局并发上限 |
+| `IMAGE_STUDIO_MAX_CONCURRENT_PER_USER` | 单 requester 并发上限 |
+| `IMAGE_STUDIO_MAX_CONCURRENT_PER_KEY` | 单 API key 并发上限 |
+| `IMAGE_STUDIO_MAX_CONCURRENT_PER_PROFILE` | 单 profile 指纹并发上限 |
+| `IMAGE_STUDIO_PAYLOAD_TTL_SECONDS` | Redis 输入 payload 保留时间 |
+| `IMAGE_STUDIO_RESULT_TTL_SECONDS` | Redis 结果 payload 保留时间 |
+| `IMAGE_STUDIO_CANCEL_TTL_SECONDS` | 取消信号保留时间 |
+| `IMAGE_STUDIO_CANCEL_POLL_INTERVAL_SECONDS` | worker 检测取消信号的间隔 |
+| `IMAGE_STUDIO_TASK_METADATA_TTL_SECONDS` | 旧任务元数据保留时间 |
+| `IMAGE_STUDIO_TASK_EVENT_TTL_SECONDS` | 任务事件日志保留时间，默认 3 天 |
+| `IMAGE_STUDIO_CLEANUP_INTERVAL_SECONDS` | 清理循环间隔 |
 
-特别致谢：[LINUX DO](https://linux.do)
+已移除的旧配置：
 
-## ⭐ Star History
+- `DEFAULT_API_URL`
+- `ENABLE_API_PROXY`
+- `API_PROXY_URL`
+- `HTTP_PROXY`
+- `HTTPS_PROXY`
+- `NO_PROXY`
+- `/api-proxy`
+- `__DEV_PROXY_CONFIG__`
+- fal.ai provider/profile 配置
 
-[![Star History Chart](https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date)](https://www.star-history.com/#CookSleep/gpt_image_playground&Date)
+## 设置页
+
+当前设置弹窗只保留用户真正需要改的四项：
+
+- API 凭证
+- API 接口：Images API 或 Responses API
+- Codex CLI 兼容模式
+- 提交后清空输入框
+
+设置持久化在浏览器 IndexedDB。运行时的上游地址、模型、超时等由环境变量和后端默认配置决定，不再写入前端用户设置。
+
+嵌入 Sub2API 时，URL 携带 `user_id` 和 `token` 后，前端会请求本应用 `/api/embedded/keys`。后端根据 `DEFAULT_IMAGE_API_URL` 推导 Sub2API origin，携带 token 获取用户 keys。此时 API 凭证输入会变成 keys 下拉选择，任务 requesterId 使用 `sub2api:<user_id>`。
+
+非嵌入场景下，前端会在 localStorage 保存一个本地 client id，任务 requesterId 使用 `client:<uuid>`。
+
+## 任务 API 摘要
+
+创建任务：
+
+```text
+POST /api/tasks
+  -> 校验 requesterId、payload、idempotency key
+  -> 写入 Postgres
+  -> payload 写入 Redis
+  -> task id 推入 Redis queue
+```
+
+查询任务：
+
+```text
+GET /api/tasks/:id?requesterId=...
+```
+
+默认只返回结果摘要，避免反复传输大图 payload。前端需要领取成功图片时使用：
+
+```text
+GET /api/tasks/:id?requesterId=...&includeResult=1
+```
+
+取消任务：
+
+```text
+POST /api/tasks/:id/cancel?requesterId=...
+```
+
+重试任务：
+
+```text
+POST /api/tasks/:id/retry?requesterId=...
+```
+
+## 未来优化
+
+任务系统：
+
+- 增强上游中断能力，取消正在运行的任务时尽量中断正在进行的上游请求。
+- 把幂等 key 策略继续稳定化，覆盖更多重复提交场景。
+- 继续完善按 requester、API key、profile 指纹的隔离和调度策略。
+- 细化失败分类：账号不可用、限流、上游超时、图片下载失败、payload 过期。
+- 扩展任务事件表查询接口，便于排查偶发问题。
+
+可观测性：
+
+- 增加队列长度、worker 状态、失败分布和任务延迟统计。
+- 后端日志改为结构化字段，便于接入 Loki、ELK 或 CloudWatch。
+- 增加 Prometheus metrics：排队时间、运行时间、成功率、失败类型、重试次数。
+- 周期统计 Redis payload/result TTL、Postgres 清理数量。
+
+前端体验：
+
+- 成功生成后高亮新图，并提供更自然的滚动定位。
+- 提示词模板继续补充中文分类、收藏、最近使用和一键套用生成。
+- 设置页继续保持精简，同时补充 key 不可用、接口不可达等明确反馈。
+- 任务详情增加更完整的复制任务 ID、复制错误、快速重试入口。
+
+部署维护：
+
+- 拆分纯前端静态镜像和后端 worker 镜像，降低发布耦合。
+- 增加 GitHub Actions：前端测试、后端测试、构建、Docker 镜像构建。
+- 镜像使用版本标签，不只依赖 `local`。
+- 为 31 服务器部署补充 Cloudflare Tunnel + Nginx 标准配置示例。
+- 增加数据库迁移策略，避免 schema 演进依赖启动时自动修补。

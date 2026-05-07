@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
-import { DEFAULT_BASE_URL, DEFAULT_SETTINGS } from './apiProfiles'
+import { DEFAULT_SETTINGS } from './apiProfiles'
 import { callImageApi } from './api'
 
 describe('callImageApi', () => {
@@ -98,8 +98,7 @@ describe('callImageApi', () => {
     }])
   })
 
-  it('uses the same-origin API proxy path when API proxy is enabled', async () => {
-    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+  it('uses the runtime image API URL directly', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: [{ b64_json: 'aW1hZ2U=' }],
     }), {
@@ -111,8 +110,6 @@ describe('callImageApi', () => {
       settings: {
         ...DEFAULT_SETTINGS,
         apiKey: 'test-key',
-        apiProxy: true,
-        baseUrl: 'http://api.example.com/v1',
       },
       prompt: 'prompt',
       params: { ...DEFAULT_PARAMS },
@@ -120,34 +117,7 @@ describe('callImageApi', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api-proxy/images/generations',
-      expect.objectContaining({ method: 'POST' }),
-    )
-  })
-
-  it('ignores stored API proxy settings when the current deployment has no proxy', async () => {
-    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      data: [{ b64_json: 'aW1hZ2U=' }],
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))
-
-    await callImageApi({
-      settings: {
-        ...DEFAULT_SETTINGS,
-        apiKey: 'test-key',
-        apiProxy: true,
-        baseUrl: 'http://api.example.com/v1',
-      },
-      prompt: 'prompt',
-      params: { ...DEFAULT_PARAMS },
-      inputImageDataUrls: [],
-    })
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${DEFAULT_BASE_URL}/images/generations`,
+      expect.stringMatching(/\/images\/generations$/),
       expect.objectContaining({ method: 'POST' }),
     )
   })
