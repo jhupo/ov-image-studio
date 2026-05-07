@@ -37,7 +37,11 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 const imageCache = new Map<string, string>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const localTaskPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let localTaskPollTimer: ReturnType<typeof setInterval> | null = null
+let localTaskPollActive = false
+const localTaskPollInFlight = new Set<string>()
+const LOCAL_TASK_POLL_INTERVAL_MS = 1500
+const LOCAL_TASK_POLL_MAX_PARALLEL = 6
 const OPENAI_INTERRUPTED_ERROR = '璇锋眰涓柇'
 const SUBMISSION_DEDUP_WINDOW_MS = 5 * 60_000
 const submissionLocks = new Map<string, { taskId: string; idempotencyKey: string; expiresAt: number }>()
@@ -410,10 +414,19 @@ function clearOpenAIWatchdogTimer(taskId: string) {
   openAIWatchdogTimers.delete(taskId)
 }
 
-function clearLocalTaskPollTimer(taskId: string) {
-  const timer = localTaskPollTimers.get(taskId)
-  if (timer) clearTimeout(timer)
-  localTaskPollTimers.delete(taskId)
+function hasRunningLocalBackendTasks() {
+  return useStore.getState().tasks.some((task) => task.status === 'running' && Boolean(task.backendTaskId))
+}
+
+function stopLocalTaskPollerIfIdle() {
+  if (!localTaskPollTimer || hasRunningLocalBackendTasks() || localTaskPollInFlight.size > 0) return
+  clearInterval(localTaskPollTimer)
+  localTaskPollTimer = null
+}
+
+function clearLocalTaskPollTimer(taskId?: string) {
+  if (taskId) localTaskPollInFlight.delete(taskId)
+  stopLocalTaskPollerIfIdle()
 }
 
 function backendTaskPatch(remoteTask: ImageTask): Partial<TaskRecord> {
@@ -560,31 +573,52 @@ async function applyLocalBackendTaskState(taskId: string) {
   clearLocalTaskPollTimer(taskId)
 }
 
-function scheduleLocalTaskPoll(taskId: string, delayMs = 1500) {
-  clearLocalTaskPollTimer(taskId)
-  const timer = setTimeout(async () => {
-    localTaskPollTimers.delete(taskId)
-    try {
-      await applyLocalBackendTaskState(taskId)
-      const task = useStore.getState().tasks.find((item) => item.id === taskId)
-      if (task?.status === 'running' && task.backendTaskId) {
-        scheduleLocalTaskPoll(taskId)
+async function pollRunningLocalBackendTasks() {
+  if (localTaskPollActive) return
+  localTaskPollActive = true
+  try {
+    const candidates = useStore
+      .getState()
+      .tasks
+      .filter((task) => task.status === 'running' && task.backendTaskId && !localTaskPollInFlight.has(task.id))
+      .slice(0, Math.max(1, LOCAL_TASK_POLL_MAX_PARALLEL - localTaskPollInFlight.size))
+
+    await Promise.all(candidates.map(async (task) => {
+      localTaskPollInFlight.add(task.id)
+      try {
+        await applyLocalBackendTaskState(task.id)
+      } catch (error) {
+        updateTaskInStore(task.id, {
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+          finishedAt: Date.now(),
+        })
+      } finally {
+        localTaskPollInFlight.delete(task.id)
       }
-    } catch (error) {
-      updateTaskInStore(taskId, {
-        status: 'error',
-        error: error instanceof Error ? error.message : String(error),
-        finishedAt: Date.now(),
-      })
-    }
-  }, delayMs)
-  localTaskPollTimers.set(taskId, timer)
+    }))
+  } finally {
+    localTaskPollActive = false
+    stopLocalTaskPollerIfIdle()
+  }
+}
+
+function scheduleLocalTaskPoll(_taskId?: string, delayMs = 0) {
+  if (!localTaskPollTimer) {
+    localTaskPollTimer = setInterval(() => {
+      void pollRunningLocalBackendTasks()
+    }, LOCAL_TASK_POLL_INTERVAL_MS)
+  }
+  if (delayMs <= 0) {
+    void pollRunningLocalBackendTasks()
+  } else {
+    window.setTimeout(() => void pollRunningLocalBackendTasks(), delayMs)
+  }
 }
 
 export function ensureLocalBackendTaskPoll(taskId: string, delayMs = 0) {
   const task = useStore.getState().tasks.find((item) => item.id === taskId)
   if (!task?.backendTaskId || task.status !== 'running') return
-  if (localTaskPollTimers.has(taskId)) return
   scheduleLocalTaskPoll(taskId, delayMs)
 }
 
@@ -1031,8 +1065,11 @@ export async function clearAllData() {
   await dbClearTasks()
   await clearImages()
   imageCache.clear()
-  for (const timer of localTaskPollTimers.values()) clearTimeout(timer)
-  localTaskPollTimers.clear()
+  if (localTaskPollTimer) {
+    clearInterval(localTaskPollTimer)
+    localTaskPollTimer = null
+  }
+  localTaskPollInFlight.clear()
   const { setTasks, clearInputImages, clearMaskDraft, setSettings, setParams, showToast } = useStore.getState()
   setTasks([])
   clearInputImages()

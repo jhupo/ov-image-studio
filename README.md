@@ -147,6 +147,7 @@ docker compose -f docker-compose.chaincloud.yml up -d --build
 | `IMAGE_STUDIO_CANCEL_TTL_SECONDS` | 取消信号保留时间 |
 | `IMAGE_STUDIO_CANCEL_POLL_INTERVAL_SECONDS` | worker 检测取消信号的间隔 |
 | `IMAGE_STUDIO_TASK_METADATA_TTL_SECONDS` | 旧任务元数据保留时间 |
+| `IMAGE_STUDIO_TASK_EVENT_TTL_SECONDS` | 任务事件日志保留时间，默认 3 天 |
 | `IMAGE_STUDIO_CLEANUP_INTERVAL_SECONDS` | 清理循环间隔 |
 
 已移除的旧配置：

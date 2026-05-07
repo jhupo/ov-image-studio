@@ -24,6 +24,7 @@ from .db import db_conn, redis_client
 from .queue import promote_delayed_tasks, queue_task
 from .tasks import (
     cleanup_expired_task_metadata,
+    cleanup_expired_task_events,
     fetch_task,
     load_task_payload,
     renew_task_lease,
@@ -347,11 +348,12 @@ def worker_loop() -> None:
 def cleanup_loop() -> None:
     while True:
         try:
-            deleted = cleanup_expired_task_metadata()
-            if deleted:
-                logger.info("task metadata cleanup deleted=%s", deleted)
+            deleted_metadata = cleanup_expired_task_metadata()
+            deleted_events = cleanup_expired_task_events()
+            if deleted_metadata or deleted_events:
+                logger.info("task cleanup deleted_metadata=%s deleted_events=%s", deleted_metadata, deleted_events)
         except Exception:
-            logger.exception("task metadata cleanup failed worker_id=%s", WORKER_ID)
+            logger.exception("task cleanup failed worker_id=%s", WORKER_ID)
         time.sleep(max(60, CLEANUP_INTERVAL_SECONDS))
 
 

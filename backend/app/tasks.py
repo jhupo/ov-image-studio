@@ -7,7 +7,7 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
-from .config import MAX_RETRIES, PAYLOAD_KEY_PREFIX, PAYLOAD_TTL_SECONDS, RESULT_KEY_PREFIX, RESULT_TTL_SECONDS, TASK_METADATA_TTL_SECONDS
+from .config import MAX_RETRIES, PAYLOAD_KEY_PREFIX, PAYLOAD_TTL_SECONDS, RESULT_KEY_PREFIX, RESULT_TTL_SECONDS, TASK_EVENT_TTL_SECONDS, TASK_METADATA_TTL_SECONDS
 from .db import db_conn, redis_client
 from .fingerprints import api_key_fingerprint, profile_fingerprint
 from .queue import queue_positions, queue_task
@@ -414,3 +414,21 @@ def cleanup_expired_task_metadata(now: int | None = None) -> int:
             pipe.delete(result_key(task_id))
         pipe.execute()
     return len(deleted_ids)
+
+
+def cleanup_expired_task_events(now: int | None = None) -> int:
+    if TASK_EVENT_TTL_SECONDS <= 0:
+        return 0
+    cutoff = (now if now is not None else now_ms()) - TASK_EVENT_TTL_SECONDS * 1000
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM image_task_events
+                WHERE created_at < %s
+                """,
+                (cutoff,),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    return deleted

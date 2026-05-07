@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app import create_app  # noqa: E402
-from app.tasks import append_task_event, public_task, public_task_event  # noqa: E402
+from app.tasks import append_task_event, cleanup_expired_task_events, public_task, public_task_event  # noqa: E402
 
 
 def task_row(**overrides):
@@ -96,6 +96,21 @@ class TaskRoutesTest(TestCase):
         self.assertEqual(response.get_json()["data"][0]["type"], "created")
         list_task_events.assert_called_once_with("task-1", 50)
 
+    @patch("app.routes.redis_client")
+    @patch("app.routes.promote_delayed_tasks")
+    @patch("app.routes.check_redis", return_value=True)
+    @patch("app.routes.check_db", return_value=True)
+    def test_health_reports_runtime_config(self, _check_db, _check_redis, _promote, redis_client):
+        redis_client.llen.return_value = 0
+        redis_client.zcard.return_value = 0
+
+        response = self.client.get("/api/health")
+
+        self.assertEqual(response.status_code, 200)
+        config = response.get_json()["data"]["config"]
+        self.assertEqual(config["workerCount"], 20)
+        self.assertEqual(config["taskEventTtlSeconds"], 259200)
+
     @patch("app.routes.queue_task")
     @patch("app.routes.clear_task_cancel_signal")
     @patch("app.routes.update_task")
@@ -176,3 +191,19 @@ class TaskEventsTest(TestCase):
         )
 
         self.assertEqual(event["metadata"], {"retryCount": 1, "errorCode": "UPSTREAM_TIMEOUT"})
+
+    @patch("app.tasks.TASK_EVENT_TTL_SECONDS", 10)
+    @patch("app.tasks.now_ms", return_value=20_000)
+    @patch("app.tasks.db_conn")
+    def test_cleanup_expired_task_events_deletes_old_rows(self, db_conn, _now_ms):
+        conn = db_conn.return_value.__enter__.return_value
+        cursor = conn.cursor.return_value.__enter__.return_value
+        cursor.rowcount = 3
+
+        deleted = cleanup_expired_task_events()
+
+        sql, args = cursor.execute.call_args.args
+        self.assertIn("DELETE FROM image_task_events", sql)
+        self.assertEqual(args[0], 10_000)
+        self.assertEqual(deleted, 3)
+        conn.commit.assert_called_once()
