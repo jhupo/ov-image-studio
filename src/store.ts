@@ -46,7 +46,7 @@ function createOpenAITimeoutError(timeoutSeconds: number) {
   return `请求超时：超过 ${timeoutSeconds} 秒仍未完成，请稍后重试或提高超时时间。`
 }
 
-function getCurrentRequesterId() {
+export function getCurrentRequesterId() {
   return getEmbeddedRequesterId(useStore.getState().embeddedSub2Api.userId) || getLocalClientRequesterId()
 }
 

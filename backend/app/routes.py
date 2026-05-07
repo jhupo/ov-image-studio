@@ -25,6 +25,7 @@ from .tasks import (
     delete_task_result,
     fetch_task,
     load_task_payload,
+    list_task_events,
     public_task,
     update_task,
     append_task_event,
@@ -171,6 +172,23 @@ def task_detail(task_id: str):
     if owner_error:
         return owner_error
     return jsonify({"code": 0, "message": "success", "data": public_task(task, include_result=should_include_task_result())})
+
+
+@api.route("/tasks/<task_id>/events", methods=["GET", "OPTIONS"])
+def task_events(task_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    task = fetch_task(task_id)
+    if not task:
+        return error_response("NOT_FOUND", "Not found", 404)
+    owner_error = ensure_task_owner(task, parse_requester_id_from_request())
+    if owner_error:
+        return owner_error
+    try:
+        limit = parse_int_arg("limit", 50) or 50
+    except ValueError as exc:
+        return error_response("BAD_REQUEST", str(exc), 400)
+    return jsonify({"code": 0, "message": "success", "data": list_task_events(task_id, limit)})
 
 
 @api.route("/tasks/<task_id>/cancel", methods=["POST", "OPTIONS"])

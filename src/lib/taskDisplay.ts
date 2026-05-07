@@ -48,6 +48,18 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 export const BACKEND_STATUS_ORDER = ['queued', 'running', 'succeeded', 'failed', 'canceled'] as const
 
+const EVENT_LABELS: Record<string, string> = {
+  created: '已创建',
+  claimed: '已进入运行',
+  upstream_request: '正在请求上游',
+  succeeded: '生成成功',
+  failed: '生成失败',
+  canceled: '已取消',
+  retry_scheduled: '已安排重试',
+  retry_requested: '已重新提交',
+  cancel_requested: '已请求取消',
+}
+
 export function formatBackendStatus(status?: string | null) {
   if (!status) return '等待后端'
   return BACKEND_STATUS_LABELS[status] ?? status
@@ -118,4 +130,9 @@ export function formatQueueScopePositions(queuePositions?: {
     queuePositions.apiKey ? `同 Key #${queuePositions.apiKey}` : '',
     queuePositions.profile ? `同配置 #${queuePositions.profile}` : '',
   ].filter(Boolean)
+}
+
+export function formatTaskEventType(type?: string | null) {
+  if (!type) return ''
+  return EVENT_LABELS[type] ?? type
 }

@@ -1,11 +1,13 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, cancelBackendTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, cancelBackendTask, getCurrentRequesterId } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
-import { formatBackendPhase, formatBackendStatus, formatDurationMs, formatDurationSeconds, formatErrorCategory, formatQueueScopePositions, getReadableTaskError, shortTaskId } from '../lib/taskDisplay'
+import { getImageTaskEvents } from '../lib/taskApi'
+import type { BackendTaskEvent } from '../types'
+import { formatBackendPhase, formatBackendStatus, formatDurationMs, formatDurationSeconds, formatErrorCategory, formatQueueScopePositions, formatTaskEventType, getReadableTaskError, shortTaskId } from '../lib/taskDisplay'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -23,6 +25,9 @@ export default function DetailModal() {
   const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
   const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
+  const [taskEvents, setTaskEvents] = useState<BackendTaskEvent[]>([])
+  const [taskEventsLoading, setTaskEventsLoading] = useState(false)
+  const [taskEventsError, setTaskEventsError] = useState('')
   const [now, setNow] = useState(Date.now())
   const imagePanelRef = useRef<HTMLDivElement>(null)
   const mainImageRef = useRef<HTMLImageElement>(null)
@@ -46,6 +51,37 @@ export default function DetailModal() {
     setNow(Date.now())
     return () => window.clearInterval(id)
   }, [task?.status])
+
+  useEffect(() => {
+    let cancelled = false
+    setTaskEvents([])
+    setTaskEventsError('')
+    if (!task?.backendTaskId) return
+
+    const loadEvents = async (showLoading: boolean) => {
+      if (showLoading) setTaskEventsLoading(true)
+      try {
+        const events = await getImageTaskEvents(task.backendTaskId!, getCurrentRequesterId())
+        if (!cancelled) {
+          setTaskEvents(events)
+          setTaskEventsError('')
+        }
+      } catch (error) {
+        if (!cancelled) setTaskEventsError(error instanceof Error ? error.message : String(error))
+      } finally {
+        if (!cancelled) setTaskEventsLoading(false)
+      }
+    }
+
+    void loadEvents(true)
+    const timer = task.status === 'running'
+      ? window.setInterval(() => void loadEvents(false), 3000)
+      : null
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearInterval(timer)
+    }
+  }, [task?.backendTaskId, task?.status, task?.backendStatus, task?.backendFinishedAt, task?.backendRetryCount])
 
   // 加载所有相关图片
   useEffect(() => {
@@ -567,6 +603,52 @@ export default function DetailModal() {
                   {task.backendResultTtlSeconds != null && <span>结果缓存 {formatDurationSeconds(task.backendResultTtlSeconds)}</span>}
                   {task.backendErrorCategory && <span>{formatErrorCategory(task.backendErrorCategory)}</span>}
                   {task.backendErrorCode && <span>{task.backendErrorCode}</span>}
+                </div>
+                <div className="mt-3 border-t border-gray-200/70 pt-2 dark:border-white/[0.08]">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="font-medium text-gray-500 dark:text-gray-400">任务时间线</span>
+                    {taskEventsLoading && <span className="text-gray-400 dark:text-gray-500">加载中</span>}
+                  </div>
+                  {taskEventsError && (
+                    <div className="rounded-md bg-red-50 px-2 py-1 text-red-500 dark:bg-red-500/10 dark:text-red-300">
+                      {taskEventsError}
+                    </div>
+                  )}
+                  {!taskEventsError && taskEvents.length === 0 && !taskEventsLoading && (
+                    <div className="text-gray-400 dark:text-gray-500">暂无事件</div>
+                  )}
+                  {!taskEventsError && taskEvents.length > 0 && (
+                    <div className="space-y-1.5">
+                      {taskEvents.slice(-12).map((event) => (
+                        <div key={event.id} className="flex gap-2">
+                          <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-blue-400" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <span className="font-medium text-gray-700 dark:text-gray-200">{formatTaskEventType(event.type)}</span>
+                              <span className="text-gray-400 dark:text-gray-500">{formatTime(event.createdAt)}</span>
+                              {event.metadata?.retryCount != null && (
+                                <span className="text-gray-400 dark:text-gray-500">重试 {event.metadata.retryCount}</span>
+                              )}
+                              {event.metadata?.delaySeconds != null && (
+                                <span className="text-gray-400 dark:text-gray-500">等待 {formatDurationSeconds(Number(event.metadata.delaySeconds))}</span>
+                              )}
+                              {event.metadata?.imageCount != null && (
+                                <span className="text-gray-400 dark:text-gray-500">{event.metadata.imageCount} 张</span>
+                              )}
+                              {event.metadata?.errorCode && (
+                                <span className="text-gray-400 dark:text-gray-500">{String(event.metadata.errorCode)}</span>
+                              )}
+                            </div>
+                            {event.message && (
+                              <div className="mt-0.5 truncate text-gray-400 dark:text-gray-500" title={event.message}>
+                                {event.message}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

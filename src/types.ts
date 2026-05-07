@@ -133,6 +133,14 @@ export interface TaskRecord {
   isFavorite?: boolean
 }
 
+export interface BackendTaskEvent {
+  id: number
+  type: string
+  message?: string | null
+  metadata?: Record<string, string | number | boolean | null>
+  createdAt: number
+}
+
 // ===== IndexedDB 存储的图片 =====
 
 export interface StoredImage {

@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app import create_app  # noqa: E402
-from app.tasks import append_task_event, public_task  # noqa: E402
+from app.tasks import append_task_event, public_task, public_task_event  # noqa: E402
 
 
 def task_row(**overrides):
@@ -74,6 +74,28 @@ class TaskRoutesTest(TestCase):
         self.assertEqual(payload["id"], "task-1")
         self.assertEqual(payload["requesterId"], "client:one")
 
+    @patch("app.routes.list_task_events")
+    @patch("app.routes.fetch_task")
+    def test_task_events_hides_other_requesters_tasks(self, fetch_task, list_task_events):
+        fetch_task.return_value = task_row(requester_id="client:other")
+
+        response = self.client.get("/api/tasks/task-1/events?requesterId=client:one")
+
+        self.assertEqual(response.status_code, 404)
+        list_task_events.assert_not_called()
+
+    @patch("app.routes.list_task_events")
+    @patch("app.routes.fetch_task")
+    def test_task_events_allows_matching_requester(self, fetch_task, list_task_events):
+        fetch_task.return_value = task_row(requester_id="client:one")
+        list_task_events.return_value = [{"id": 1, "type": "created", "createdAt": 1234}]
+
+        response = self.client.get("/api/tasks/task-1/events?requesterId=client:one")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"][0]["type"], "created")
+        list_task_events.assert_called_once_with("task-1", 50)
+
     @patch("app.routes.queue_task")
     @patch("app.routes.clear_task_cancel_signal")
     @patch("app.routes.update_task")
@@ -126,3 +148,21 @@ class TaskEventsTest(TestCase):
         self.assertEqual(args[1], "upstream_request")
         self.assertEqual(args[4], 1234)
         conn.commit.assert_called_once()
+
+    def test_public_task_event_hides_internal_metadata(self):
+        event = public_task_event(
+            {
+                "id": 1,
+                "event_type": "claimed",
+                "message": None,
+                "metadata": {
+                    "workerId": "worker-secret",
+                    "requesterId": "client:one",
+                    "retryCount": 1,
+                    "errorCode": "UPSTREAM_TIMEOUT",
+                },
+                "created_at": 1234,
+            }
+        )
+
+        self.assertEqual(event["metadata"], {"retryCount": 1, "errorCode": "UPSTREAM_TIMEOUT"})

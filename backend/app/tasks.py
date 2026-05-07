@@ -258,6 +258,41 @@ def append_task_event(task_id: str, event_type: str, message: str | None = None,
         conn.commit()
 
 
+SAFE_EVENT_METADATA_KEYS = {"retryCount", "maxRetries", "delaySeconds", "errorCode", "imageCount", "stage"}
+
+
+def public_task_event(event: dict[str, Any]) -> dict[str, Any]:
+    metadata = event.get("metadata") or {}
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "id": event["id"],
+        "type": event["event_type"],
+        "message": event.get("message"),
+        "metadata": {key: metadata[key] for key in SAFE_EVENT_METADATA_KEYS if key in metadata},
+        "createdAt": event["created_at"],
+    }
+
+
+def list_task_events(task_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(200, limit))
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_type, message, metadata, created_at
+                FROM image_task_events
+                WHERE task_id = %s
+                ORDER BY created_at ASC, id ASC
+                LIMIT %s
+                """,
+                (task_id, safe_limit),
+            )
+            return [public_task_event(row) for row in cur.fetchall()]
+
+
 def create_task(payload: dict[str, Any], idempotency_key: str | None) -> dict[str, Any]:
     error = validate_task_payload(payload)
     if error:

@@ -1,4 +1,4 @@
-import type { RuntimeApiProfile, TaskParams } from '../types'
+import type { BackendTaskEvent, RuntimeApiProfile, TaskParams } from '../types'
 
 export interface ImageTaskRequest {
   requesterId: string
@@ -97,4 +97,12 @@ export async function retryImageTask(taskId: string, requesterId: string): Promi
     method: 'POST',
   })
   return parseResponse<ImageTask>(response)
+}
+
+export async function getImageTaskEvents(taskId: string, requesterId: string): Promise<BackendTaskEvent[]> {
+  const params = new URLSearchParams({ requesterId })
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/events?${params.toString()}`, {
+    method: 'GET',
+  })
+  return parseResponse<BackendTaskEvent[]>(response)
 }
