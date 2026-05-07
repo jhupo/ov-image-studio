@@ -36,7 +36,6 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 // 鍐呭瓨缂撳瓨锛宨d 鈫?dataUrl锛岄伩鍏嶆瘡娆′粠 IndexedDB 璇诲彇
 
 const imageCache = new Map<string, string>()
-const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let localTaskPollTimer: ReturnType<typeof setInterval> | null = null
 let localTaskPollActive = false
 const localTaskPollInFlight = new Set<string>()
@@ -45,10 +44,6 @@ const LOCAL_TASK_POLL_MAX_PARALLEL = 6
 const OPENAI_INTERRUPTED_ERROR = '璇锋眰涓柇'
 const SUBMISSION_DEDUP_WINDOW_MS = 5 * 60_000
 const submissionLocks = new Map<string, { taskId: string; idempotencyKey: string; expiresAt: number }>()
-
-function createOpenAITimeoutError(timeoutSeconds: number) {
-  return `请求超时：超过 ${timeoutSeconds} 秒仍未完成，请稍后重试或提高超时时间。`
-}
 
 export function getCurrentRequesterId() {
   return getEmbeddedRequesterId(useStore.getState().embeddedSub2Api.userId) || getLocalClientRequesterId()
@@ -408,12 +403,6 @@ export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Dat
   return { tasks: updatedTasks, interruptedTasks }
 }
 
-function clearOpenAIWatchdogTimer(taskId: string) {
-  const timer = openAIWatchdogTimers.get(taskId)
-  if (timer) clearTimeout(timer)
-  openAIWatchdogTimers.delete(taskId)
-}
-
 function hasRunningLocalBackendTasks() {
   return useStore.getState().tasks.some((task) => task.status === 'running' && Boolean(task.backendTaskId))
 }
@@ -450,34 +439,6 @@ function backendTaskPatch(remoteTask: ImageTask): Partial<TaskRecord> {
     backendPayloadTtlSeconds: remoteTask.payloadTtlSeconds ?? null,
     backendResultTtlSeconds: remoteTask.resultTtlSeconds ?? null,
   }
-}
-
-function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.now()) {
-  const task = useStore.getState().tasks.find((item) => item.id === taskId)
-  if (!task || !isRunningOpenAITask(task)) return false
-
-  updateTaskInStore(taskId, {
-    status: 'error',
-    error,
-    finishedAt: now,
-    elapsed: Math.max(0, now - task.createdAt),
-  })
-  return true
-}
-
-function scheduleOpenAIWatchdog(taskId: string, timeoutSeconds: number) {
-  clearOpenAIWatchdogTimer(taskId)
-  const task = useStore.getState().tasks.find((item) => item.id === taskId)
-  if (!task || !isRunningOpenAITask(task)) return
-
-  const timeoutMs = Math.max(0, timeoutSeconds * 1000)
-  const remainingMs = Math.max(0, timeoutMs - (Date.now() - task.createdAt))
-  const timer = setTimeout(() => {
-    openAIWatchdogTimers.delete(taskId)
-    const failed = failOpenAITaskIfStillRunning(taskId, createOpenAITimeoutError(timeoutSeconds))
-    if (failed) useStore.getState().showToast('OpenAI 浠诲姟璇锋眰瓒呮椂', 'error')
-  }, remainingMs)
-  openAIWatchdogTimers.set(taskId, timer)
 }
 
 export function showCodexCliPrompt(force = false, reason = '鎺ュ彛杩斿洖鐨勬彁绀鸿瘝宸茶鏀瑰啓') {
