@@ -185,12 +185,17 @@ class TaskEventsTest(TestCase):
                     "requesterId": "client:one",
                     "retryCount": 1,
                     "errorCode": "UPSTREAM_TIMEOUT",
+                    "waitReason": "concurrency",
+                    "saturatedScopes": ["global", "apiKey"],
                 },
                 "created_at": 1234,
             }
         )
 
-        self.assertEqual(event["metadata"], {"retryCount": 1, "errorCode": "UPSTREAM_TIMEOUT"})
+        self.assertEqual(
+            event["metadata"],
+            {"retryCount": 1, "errorCode": "UPSTREAM_TIMEOUT", "waitReason": "concurrency"},
+        )
 
     @patch("app.tasks.TASK_EVENT_TTL_SECONDS", 10)
     @patch("app.tasks.now_ms", return_value=20_000)

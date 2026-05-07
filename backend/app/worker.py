@@ -91,6 +91,25 @@ def acquire_concurrency(task: dict) -> bool:
     return bool(redis_client.eval(ACQUIRE_CONCURRENCY_SCRIPT, len(keys), *keys, LEASE_SECONDS * 3, *limits))
 
 
+def saturated_concurrency_scopes(task: dict) -> list[str]:
+    keys, limits = concurrency_keys(task)
+    scopes = ["global", "user", "apiKey", "profile"]
+    saturated: list[str] = []
+    if not keys:
+        return saturated
+    values = redis_client.mget(keys)
+    for scope, raw_value, limit in zip(scopes, values, limits):
+        if limit < 0:
+            continue
+        try:
+            current = int(raw_value or 0)
+        except (TypeError, ValueError):
+            current = 0
+        if current >= limit:
+            saturated.append(scope)
+    return saturated
+
+
 def release_concurrency(task: dict) -> None:
     keys, _ = concurrency_keys(task)
     redis_client.eval(RELEASE_CONCURRENCY_SCRIPT, len(keys), *keys)
@@ -153,7 +172,21 @@ def claim_task(task_id: str) -> dict | None:
                 return None
             if not acquire_concurrency(task):
                 conn.rollback()
-                logger.info("task waiting for concurrency task_id=%s", task_id)
+                saturated_scopes = saturated_concurrency_scopes(task)
+                logger.info(
+                    "task waiting for concurrency task_id=%s scopes=%s requester=%s",
+                    task_id,
+                    ",".join(saturated_scopes) or "unknown",
+                    task.get("requester_id") or "anonymous",
+                )
+                append_task_event(
+                    task_id,
+                    "concurrency_waiting",
+                    metadata={
+                        "waitReason": "concurrency",
+                        "saturatedScopes": saturated_scopes,
+                    },
+                )
                 queue_task(task_id, now + 1000)
                 return None
             cur.execute(

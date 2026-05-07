@@ -52,6 +52,7 @@ const EVENT_LABELS: Record<string, string> = {
   created: '已创建',
   claimed: '已进入运行',
   upstream_request: '正在请求上游',
+  concurrency_waiting: '等待可用队列',
   succeeded: '生成成功',
   failed: '生成失败',
   canceled: '已取消',

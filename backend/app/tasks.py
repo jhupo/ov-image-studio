@@ -259,7 +259,7 @@ def append_task_event(task_id: str, event_type: str, message: str | None = None,
         conn.commit()
 
 
-SAFE_EVENT_METADATA_KEYS = {"retryCount", "maxRetries", "delaySeconds", "errorCode", "imageCount", "stage"}
+SAFE_EVENT_METADATA_KEYS = {"retryCount", "maxRetries", "delaySeconds", "errorCode", "imageCount", "stage", "waitReason"}
 
 
 def public_task_event(event: dict[str, Any]) -> dict[str, Any]:
