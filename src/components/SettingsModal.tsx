@@ -254,9 +254,9 @@ export default function SettingsModal() {
           <SectionTitle icon={<SlidersIcon />} title="通用设置" />
         </div>
         <section className="overflow-hidden rounded-2xl border border-gray-200/70 bg-white/45 dark:border-white/[0.08] dark:bg-white/[0.03]">
-          <div className="flex min-h-[48px] items-center justify-between gap-4 px-4">
+          <div className="flex min-h-[44px] items-center justify-between gap-3 px-3">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/5 text-blue-500 dark:text-blue-400">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/5 text-blue-500 dark:text-blue-400">
                 <TerminalIcon />
               </span>
               <div className="text-xs font-semibold text-gray-800 dark:text-gray-100">Codex CLI 兼容模式</div>
@@ -268,9 +268,9 @@ export default function SettingsModal() {
             />
           </div>
           <div className="border-t border-gray-200/70 dark:border-white/[0.08]" />
-          <div className="flex min-h-[48px] items-center justify-between gap-4 px-4">
+          <div className="flex min-h-[44px] items-center justify-between gap-3 px-3">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/5 text-blue-500 dark:text-blue-400">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/5 text-blue-500 dark:text-blue-400">
                 <UploadIcon />
               </span>
               <div className="text-xs font-semibold text-gray-800 dark:text-gray-100">提交后清空输入框</div>

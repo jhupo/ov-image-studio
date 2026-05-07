@@ -53,11 +53,11 @@ export default function TaskCard({
     const deltaX = e.touches[0].clientX - touchStartRef.current.x
     const deltaY = e.touches[0].clientY - touchStartRef.current.y
     
-    // 如果主要是水平滑动
+    // 如果主要是水平滑�?
     if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
       horizontalSwipeRef.current = true
       e.preventDefault()
-      // 限制滑动距离，例如最大 60px
+      // 限制滑动距离，例如最�?60px
       const boundedOffset = Math.max(-60, Math.min(60, deltaX))
       setSwipeOffset(boundedOffset)
       setSwipeActionActive(Math.abs(deltaX) >= 40)
@@ -110,7 +110,7 @@ export default function TaskCard({
     return () => clearInterval(id)
   }, [task.status])
 
-  // 加载缩略图
+  // 加载缩略�?
   useEffect(() => {
     setCoverRatio('')
     setCoverSize('')
@@ -313,7 +313,7 @@ export default function TaskCard({
               />
             </svg>
           )}
-          {/* 运行中显示耗时，完成后显示封面图比例与分辨率标签 */}
+          {/* 运行中显示耗时，完成后显示封面图比例与分辨率标�?*/}
           <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
             {showRunningTimer || task.status !== 'done' || !coverRatio || !coverSize ? (
               <span className="flex items-center gap-1 bg-black/50 text-white text-[10px] sm:text-xs px-1.5 py-0.5 rounded backdrop-blur-sm font-mono">
@@ -337,7 +337,7 @@ export default function TaskCard({
 
         {/* 右侧信息区域 */}
         <div className="flex-1 p-3 flex flex-col min-w-0">
-          <div className="flex-1 min-h-0 mb-2">
+          <div className="flex-1 min-h-0 mb-2 overflow-hidden">
             <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
               {task.prompt || '(无提示词)'}
             </p>
@@ -358,7 +358,7 @@ export default function TaskCard({
             )}
           </div>
           <div className="mt-auto flex flex-col gap-1.5">
-            {/* 参数：横向滚动 */}
+            {/* 参数：横向滚�?*/}
             <div className="flex overflow-x-auto hide-scrollbar gap-1.5 whitespace-nowrap mask-edge-r min-w-0 pr-2">
               <ParamValue task={task} paramKey="quality" className="text-xs px-1.5 py-0.5 rounded flex-shrink-0" />
               <ParamValue task={task} paramKey="size" className="text-xs px-1.5 py-0.5 rounded flex-shrink-0" />
@@ -372,16 +372,16 @@ export default function TaskCard({
               </div>
             {/* 操作按钮 */}
             <div
-              className="flex flex-shrink-0 items-center justify-end gap-1.5"
+              className="flex h-8 flex-shrink-0 items-center justify-end gap-0.5 overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {task.status === 'error' && (
                 <button
                   onClick={() => retryTask(task)}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-950/30"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-950/30"
                   title="重试失败任务"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                 </button>
@@ -389,10 +389,10 @@ export default function TaskCard({
               {task.status === 'running' && task.backendTaskId && (
                 <button
                   onClick={() => cancelBackendTask(task)}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
                   title="取消任务"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
@@ -401,7 +401,7 @@ export default function TaskCard({
                 onClick={() =>
                   updateTaskInStore(task.id, { isFavorite: !task.isFavorite })
                 }
-                className={`flex h-8 w-8 items-center justify-center rounded-md transition ${
+                className={`flex h-7 w-7 items-center justify-center rounded-md transition ${
                   task.isFavorite
                     ? 'text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'
                     : 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'
@@ -409,7 +409,7 @@ export default function TaskCard({
                 title={task.isFavorite ? '取消收藏' : '收藏记录'}
               >
                 <svg
-                  className="w-4 h-4"
+                  className="w-3.5 h-3.5"
                   fill={task.isFavorite ? 'currentColor' : 'none'}
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -424,11 +424,11 @@ export default function TaskCard({
               </button>
               <button
                 onClick={onReuse}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-950/30"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-950/30"
                 title="复用配置"
               >
                 <svg
-                  className="w-4 h-4"
+                  className="w-3.5 h-3.5"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -443,12 +443,12 @@ export default function TaskCard({
               </button>
               <button
                 onClick={onEditOutputs}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-green-50 hover:text-green-500 disabled:opacity-30 dark:hover:bg-green-950/30"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-green-50 hover:text-green-500 disabled:opacity-30 dark:hover:bg-green-950/30"
                 title="编辑输出"
                 disabled={!task.outputImages?.length}
               >
                 <svg
-                  className="w-4 h-4"
+                  className="w-3.5 h-3.5"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -463,11 +463,11 @@ export default function TaskCard({
               </button>
               <button
                 onClick={onDelete}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
                 title="删除记录"
               >
                 <svg
-                  className="w-4 h-4"
+                  className="w-3.5 h-3.5"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"

@@ -314,7 +314,7 @@ export default function DetailModal() {
     >
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
       <div
-        className="relative flex max-h-[90vh] w-full max-w-4xl min-w-0 flex-col overflow-hidden rounded-3xl border border-white/50 bg-white/90 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/90 dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] dark:ring-white/10 md:flex-row"
+        className="relative flex max-h-[90vh] w-full max-w-5xl min-w-0 flex-col overflow-hidden rounded-3xl border border-white/50 bg-white/90 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/90 dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] dark:ring-white/10 md:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex h-14 items-center justify-end px-4 md:hidden">
@@ -330,7 +330,7 @@ export default function DetailModal() {
         </div>
 
         {/* 左侧：图片 */}
-        <div ref={imagePanelRef} className="relative flex h-64 w-full flex-shrink-0 items-center justify-center bg-gray-100 dark:bg-black/20 md:h-auto md:w-1/2 md:min-w-0">
+        <div ref={imagePanelRef} className="relative flex h-64 w-full flex-shrink-0 items-center justify-center bg-gray-100 dark:bg-black/20 md:h-auto md:min-w-0 md:flex-[1_1_52%]">
           {task.status === 'done' && outputLen > 0 && currentOutputImageSrc && (
             <>
               <img
@@ -464,7 +464,7 @@ export default function DetailModal() {
         </div>
 
         {/* 右侧：信息 */}
-        <div className="flex w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden p-5 md:w-1/2">
+        <div className="flex w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden p-5 md:flex-[0_1_48%]">
           <button
             onClick={() => setDetailTaskId(null)}
             className="absolute top-3 right-3 hidden p-1 rounded-full hover:bg-gray-100 dark:hover:bg-white/[0.06] transition text-gray-400 z-10 md:block"
@@ -506,7 +506,7 @@ export default function DetailModal() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap mb-4">
+            <p className="min-w-0 break-words text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap mb-4">
               {task.prompt || '(无提示词)'}
             </p>
             {showRevisedPrompt && currentRevisedPrompt && (
@@ -576,14 +576,14 @@ export default function DetailModal() {
                 <span className="text-gray-400 dark:text-gray-500">来源</span>
                 <br />
                 <span className="font-medium text-gray-700 dark:text-gray-200">OpenAI</span>
-                <span className="text-gray-400 dark:text-gray-500"> · {taskModel}</span>
+                <span className="break-all text-gray-400 dark:text-gray-500"> · {taskModel}</span>
               </div>
             )}
             {task.backendTaskId && (
-              <div className="mb-2 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
+              <div className="mb-2 min-w-0 overflow-hidden rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
                 <span className="text-gray-400 dark:text-gray-500">后端任务</span>
                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="min-w-0 max-w-full truncate font-mono text-gray-700 dark:text-gray-200">{shortTaskId(task.backendTaskId)}</span>
+                  <span className="min-w-0 max-w-full truncate font-mono text-gray-700 dark:text-gray-200" title={task.backendTaskId}>{shortTaskId(task.backendTaskId)}</span>
                   <span className="font-medium text-gray-700 dark:text-gray-200">
                     {formatBackendPhase(task.backendPhase) || formatBackendStatus(task.backendStatus)}
                     {task.backendQueuePosition ? ` #${task.backendQueuePosition}` : ''}
@@ -602,7 +602,7 @@ export default function DetailModal() {
                   {task.backendPayloadTtlSeconds != null && <span>输入缓存 {formatDurationSeconds(task.backendPayloadTtlSeconds)}</span>}
                   {task.backendResultTtlSeconds != null && <span>结果缓存 {formatDurationSeconds(task.backendResultTtlSeconds)}</span>}
                   {task.backendErrorCategory && <span>{formatErrorCategory(task.backendErrorCategory)}</span>}
-                  {task.backendErrorCode && <span>{task.backendErrorCode}</span>}
+                  {task.backendErrorCode && <span className="max-w-full truncate" title={task.backendErrorCode}>{task.backendErrorCode}</span>}
                 </div>
                 <div className="mt-3 border-t border-gray-200/70 pt-2 dark:border-white/[0.08]">
                   <div className="mb-2 flex items-center justify-between">
@@ -640,7 +640,7 @@ export default function DetailModal() {
                               )}
                             </div>
                             {event.message && (
-                              <div className="mt-0.5 truncate text-gray-400 dark:text-gray-500" title={event.message}>
+                              <div className="mt-0.5 max-w-full truncate text-gray-400 dark:text-gray-500" title={event.message}>
                                 {event.message}
                               </div>
                             )}
@@ -695,10 +695,10 @@ export default function DetailModal() {
           </div>
 
           {/* 操作按钮 */}
-          <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4 dark:border-white/[0.08]">
+          <div className="-mx-1 flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4 dark:border-white/[0.08]">
             <button
               onClick={handleReuse}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-blue-50 px-3 text-sm font-medium text-blue-600 transition hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-2.5 text-xs font-medium text-blue-600 transition hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20"
             >
               <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
@@ -708,7 +708,7 @@ export default function DetailModal() {
             <button
               onClick={handleEdit}
               disabled={!outputLen}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-green-50 px-3 text-sm font-medium text-green-600 transition hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-green-50 px-2.5 text-xs font-medium text-green-600 transition hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
             >
               <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -717,7 +717,7 @@ export default function DetailModal() {
             </button>
             <button
               onClick={handleDelete}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-red-50 px-3 text-sm font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-red-50 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
             >
               <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -727,7 +727,7 @@ export default function DetailModal() {
             {task.status === 'running' && task.backendTaskId && (
               <button
                 onClick={handleCancel}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-red-50 px-3 text-sm font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-red-50 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
               >
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -737,14 +737,14 @@ export default function DetailModal() {
             )}
             <button
               onClick={handleToggleFavorite}
-              className={`flex h-9 w-10 flex-none items-center justify-center rounded-xl transition ${
+              className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg transition ${
                 task.isFavorite
                   ? 'bg-yellow-50 text-yellow-500 hover:bg-yellow-100 dark:bg-yellow-500/10 dark:hover:bg-yellow-500/20'
                   : 'bg-gray-50 text-gray-400 hover:bg-yellow-50 hover:text-yellow-500 dark:bg-white/[0.04] dark:hover:bg-yellow-500/10'
               }`}
               title={task.isFavorite ? '取消收藏' : '收藏记录'}
             >
-              <svg className="w-5 h-5" fill={task.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill={task.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
               </svg>
             </button>
