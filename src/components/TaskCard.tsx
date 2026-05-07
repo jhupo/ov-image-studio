@@ -372,13 +372,13 @@ export default function TaskCard({
               </div>
             {/* 操作按钮 */}
             <div
-              className="flex gap-1 justify-end flex-shrink-0"
+              className="flex flex-shrink-0 items-center justify-end gap-1.5"
               onClick={(e) => e.stopPropagation()}
             >
               {task.status === 'error' && (
                 <button
                   onClick={() => retryTask(task)}
-                  className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-950/30"
                   title="重试失败任务"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -389,7 +389,7 @@ export default function TaskCard({
               {task.status === 'running' && task.backendTaskId && (
                 <button
                   onClick={() => cancelBackendTask(task)}
-                  className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-500 transition"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
                   title="取消任务"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -401,7 +401,7 @@ export default function TaskCard({
                 onClick={() =>
                   updateTaskInStore(task.id, { isFavorite: !task.isFavorite })
                 }
-                className={`p-1.5 rounded-md transition ${
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition ${
                   task.isFavorite
                     ? 'text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'
                     : 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'
@@ -424,7 +424,7 @@ export default function TaskCard({
               </button>
               <button
                 onClick={onReuse}
-                className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-950/30"
                 title="复用配置"
               >
                 <svg
@@ -443,7 +443,7 @@ export default function TaskCard({
               </button>
               <button
                 onClick={onEditOutputs}
-                className="p-1.5 rounded-md hover:bg-green-50 dark:hover:bg-green-950/30 text-gray-400 hover:text-green-500 transition disabled:opacity-30"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-green-50 hover:text-green-500 disabled:opacity-30 dark:hover:bg-green-950/30"
                 title="编辑输出"
                 disabled={!task.outputImages?.length}
               >
@@ -463,7 +463,7 @@ export default function TaskCard({
               </button>
               <button
                 onClick={onDelete}
-                className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-500 transition"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
                 title="删除记录"
               >
                 <svg
