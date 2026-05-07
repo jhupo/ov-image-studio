@@ -31,6 +31,7 @@ from .tasks import (
     summarize_result_payload,
     update_task,
     delete_task_payload,
+    append_task_event,
 )
 from .timeutil import now_ms
 from .upstream import TaskExecutionError, call_openai_task
@@ -171,6 +172,15 @@ def claim_task(task_id: str) -> dict | None:
         conn.commit()
     claimed = fetch_task(task_id)
     if claimed:
+        append_task_event(
+            task_id,
+            "claimed",
+            metadata={
+                "workerId": WORKER_ID,
+                "retryCount": claimed.get("retry_count", 0),
+                "maxRetries": claimed.get("max_retries", 0),
+            },
+        )
         logger.info(
             "task started task_id=%s worker_id=%s retry=%s/%s requester=%s",
             task_id,
@@ -208,6 +218,11 @@ def finish_task(task: dict, status: str, result: dict | None = None, error_code:
             lease_expires_at=None,
         )
         if status == "succeeded":
+            append_task_event(
+                task["id"],
+                "succeeded",
+                metadata={"workerId": WORKER_ID, "imageCount": len(result.get("images") or []) if result else 0},
+            )
             logger.info(
                 "task succeeded task_id=%s worker_id=%s image_count=%s elapsed_ms=%s",
                 task["id"],
@@ -216,6 +231,12 @@ def finish_task(task: dict, status: str, result: dict | None = None, error_code:
                 now_ms() - task["created_at"],
             )
         else:
+            append_task_event(
+                task["id"],
+                status,
+                message=error_message,
+                metadata={"workerId": WORKER_ID, "errorCode": error_code},
+            )
             logger.error(
                 "task finished with error task_id=%s worker_id=%s status=%s error_code=%s error=%s",
                 task["id"],
@@ -263,6 +284,12 @@ def retry_or_fail_task(task: dict, error: TaskExecutionError) -> None:
         error.code,
         str(error),
     )
+    append_task_event(
+        task["id"],
+        "retry_scheduled",
+        message=str(error),
+        metadata={"workerId": WORKER_ID, "retryCount": retry_count, "delaySeconds": delay, "errorCode": error.code},
+    )
     release_concurrency(task)
     queue_task(task["id"], available_at)
 
@@ -283,9 +310,11 @@ def execute_claimed_task(task: dict) -> None:
     try:
         latest = fetch_task(task["id"])
         if (latest and latest["status"] == "canceled") or is_task_cancelled(task["id"]):
+            append_task_event(task["id"], "canceled", metadata={"workerId": WORKER_ID, "stage": "before_upstream"})
             release_concurrency(task)
             return
         logger.info("task requesting upstream task_id=%s worker_id=%s", task["id"], WORKER_ID)
+        append_task_event(task["id"], "upstream_request", metadata={"workerId": WORKER_ID})
         payload = {**payload, "_taskId": task["id"]}
         result = call_openai_task(payload)
         finish_task(task, "succeeded", result=result)

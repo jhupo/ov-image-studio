@@ -89,4 +89,17 @@ def ensure_schema() -> None:
                 WHERE idempotency_key IS NOT NULL
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS image_task_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    task_id TEXT NOT NULL REFERENCES image_tasks(id) ON DELETE CASCADE,
+                    event_type TEXT NOT NULL,
+                    message TEXT NULL,
+                    metadata JSONB NULL,
+                    created_at BIGINT NOT NULL
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_image_task_events_task ON image_task_events (task_id, created_at)")
         conn.commit()

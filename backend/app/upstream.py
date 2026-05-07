@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import requests
 
 from .cancellation import is_task_cancelled, register_cancel_callback, unregister_cancel_callback
-from .config import DEFAULT_IMAGE_API_URL, TASK_TIMEOUT_SECONDS
+from .config import CANCEL_POLL_INTERVAL_SECONDS, DEFAULT_IMAGE_API_URL, TASK_TIMEOUT_SECONDS
 from .fingerprints import build_api_url, resolve_images_base_url
 
 
@@ -31,6 +32,37 @@ def raise_if_cancelled(task_id: str | None) -> None:
         raise TaskExecutionError("USER_CANCELED", "Task canceled by requester", False)
 
 
+class TaskCancelWatcher:
+    def __init__(self, task_id: str | None, on_cancel) -> None:
+        self.task_id = task_id
+        self.on_cancel = on_cancel
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def __enter__(self):
+        if not self.task_id:
+            return self
+        self.thread = threading.Thread(target=self.watch, name=f"task-cancel-watch-{self.task_id}", daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.stop.set()
+        if self.thread:
+            self.thread.join(timeout=1)
+
+    def watch(self) -> None:
+        while not self.stop.wait(max(0.1, CANCEL_POLL_INTERVAL_SECONDS)):
+            if not self.task_id:
+                return
+            try:
+                if is_task_cancelled(self.task_id):
+                    self.on_cancel()
+                    return
+            except Exception:
+                return
+
+
 def request_with_cancellation(
     task_id: str | None,
     method: str,
@@ -39,16 +71,24 @@ def request_with_cancellation(
 ) -> requests.Response:
     raise_if_cancelled(task_id)
     session = requests.Session()
+    cancelled_by_requester = False
 
     def close_session() -> None:
+        nonlocal cancelled_by_requester
+        cancelled_by_requester = True
         session.close()
 
     if task_id:
         register_cancel_callback(task_id, close_session)
     try:
-        response = session.request(method, url, **kwargs)
+        with TaskCancelWatcher(task_id, close_session):
+            response = session.request(method, url, **kwargs)
         raise_if_cancelled(task_id)
         return response
+    except requests.RequestException as exc:
+        if cancelled_by_requester:
+            raise TaskExecutionError("USER_CANCELED", "Task canceled by requester", False) from exc
+        raise
     finally:
         if task_id:
             unregister_cancel_callback(task_id, close_session)

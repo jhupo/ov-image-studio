@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app import create_app  # noqa: E402
-from app.tasks import public_task  # noqa: E402
+from app.tasks import append_task_event, public_task  # noqa: E402
 
 
 def task_row(**overrides):
@@ -109,3 +109,20 @@ class PublicTaskTest(TestCase):
         self.assertNotIn("images", summary["result"])
         self.assertEqual(summary["result"]["imageCount"], 2)
         self.assertEqual(full["result"]["images"], ["data:image/png;base64,a", "data:image/png;base64,b"])
+
+
+class TaskEventsTest(TestCase):
+    @patch("app.tasks.now_ms", return_value=1234)
+    @patch("app.tasks.db_conn")
+    def test_append_task_event_writes_event_row(self, db_conn, _now_ms):
+        conn = db_conn.return_value.__enter__.return_value
+        cursor = conn.cursor.return_value.__enter__.return_value
+
+        append_task_event("task-1", "upstream_request", metadata={"workerId": "worker-1"})
+
+        sql, args = cursor.execute.call_args.args
+        self.assertIn("INSERT INTO image_task_events", sql)
+        self.assertEqual(args[0], "task-1")
+        self.assertEqual(args[1], "upstream_request")
+        self.assertEqual(args[4], 1234)
+        conn.commit.assert_called_once()

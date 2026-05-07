@@ -145,6 +145,7 @@ docker compose -f docker-compose.chaincloud.yml up -d --build
 | `IMAGE_STUDIO_PAYLOAD_TTL_SECONDS` | Redis 输入 payload 保留时间 |
 | `IMAGE_STUDIO_RESULT_TTL_SECONDS` | Redis 结果 payload 保留时间 |
 | `IMAGE_STUDIO_CANCEL_TTL_SECONDS` | 取消信号保留时间 |
+| `IMAGE_STUDIO_CANCEL_POLL_INTERVAL_SECONDS` | worker 检测取消信号的间隔 |
 | `IMAGE_STUDIO_TASK_METADATA_TTL_SECONDS` | 旧任务元数据保留时间 |
 | `IMAGE_STUDIO_CLEANUP_INTERVAL_SECONDS` | 清理循环间隔 |
 
@@ -219,7 +220,7 @@ POST /api/tasks/:id/retry?requesterId=...
 - 把幂等 key 策略继续稳定化，覆盖更多重复提交场景。
 - 继续完善按 requester、API key、profile 指纹的隔离和调度策略。
 - 细化失败分类：账号不可用、限流、上游超时、图片下载失败、payload 过期。
-- 增加完整任务事件表，便于排查偶发问题。
+- 扩展任务事件表查询接口，便于排查偶发问题。
 
 可观测性：
 

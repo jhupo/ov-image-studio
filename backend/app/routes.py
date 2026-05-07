@@ -27,6 +27,7 @@ from .tasks import (
     load_task_payload,
     public_task,
     update_task,
+    append_task_event,
 )
 from .timeutil import now_ms
 
@@ -185,6 +186,7 @@ def cancel_task(task_id: str):
     if task["status"] in TERMINAL_STATES:
         return jsonify({"code": 0, "message": "success", "data": public_task(task)})
     signal_task_cancel(task_id)
+    append_task_event(task_id, "cancel_requested")
     remove_task_from_queues(task_id)
     delete_task_result(task_id)
     update_task(
@@ -257,4 +259,5 @@ def retry_task(task_id: str):
     )
     clear_task_cancel_signal(task_id)
     queue_task(task_id)
+    append_task_event(task_id, "retry_requested")
     return jsonify({"code": 0, "message": "success", "data": public_task(fetch_task(task_id))})

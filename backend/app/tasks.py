@@ -245,6 +245,19 @@ def update_task(task_id: str, **patch: Any) -> None:
         conn.commit()
 
 
+def append_task_event(task_id: str, event_type: str, message: str | None = None, metadata: dict[str, Any] | None = None) -> None:
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO image_task_events (task_id, event_type, message, metadata, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (task_id, event_type, message, Jsonb(metadata) if metadata is not None else None, now_ms()),
+            )
+        conn.commit()
+
+
 def create_task(payload: dict[str, Any], idempotency_key: str | None) -> dict[str, Any]:
     error = validate_task_payload(payload)
     if error:
@@ -317,6 +330,7 @@ def create_task(payload: dict[str, Any], idempotency_key: str | None) -> dict[st
                     return existing
             raise
     queue_task(task_id)
+    append_task_event(task_id, "created", metadata={"requesterId": requester_id, "idempotencyKey": idempotency_key})
     return fetch_task(task_id)  # type: ignore[return-value]
 
 
