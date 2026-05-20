@@ -75,6 +75,9 @@ def summarize_result_payload(result: dict[str, Any] | None) -> dict[str, Any] | 
         return None
     return {
         "imageCount": len(result.get("images") or []),
+        "requestedCount": result.get("requestedCount"),
+        "failedCount": result.get("failedCount") or 0,
+        "partialErrors": result.get("partialErrors") or [],
         "actualParams": result.get("actualParams") or {},
         "actualParamsList": result.get("actualParamsList") or [],
         "revisedPrompts": result.get("revisedPrompts") or [],

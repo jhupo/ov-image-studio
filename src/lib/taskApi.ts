@@ -11,6 +11,13 @@ export interface ImageTaskRequest {
 
 export interface ImageTaskResult {
   images?: string[]
+  requestedCount?: number | null
+  failedCount?: number
+  partialErrors?: Array<{
+    index?: number
+    errorCode?: string
+    message?: string
+  }>
   actualParams?: Partial<TaskParams>
   actualParamsList?: Array<Partial<TaskParams>>
   revisedPrompts?: Array<string | null>

@@ -13,6 +13,7 @@ from .fingerprints import build_api_url, resolve_images_base_url
 
 
 PROMPT_REWRITE_GUARD_PREFIX = "Use the following text as the complete prompt. Do not rewrite it:"
+MULTI_IMAGE_SINGLE_MAX_ATTEMPTS = 3
 
 
 class TaskExecutionError(Exception):
@@ -175,10 +176,11 @@ def raise_upstream_error(exc: requests.RequestException) -> None:
 def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
     profile = payload["profile"]
     params = payload["params"]
+    input_images = payload.get("inputImageDataUrls") or []
     output_count = max(1, int(params.get("n", 1) or 1))
     raise_if_cancelled(task_id_from_payload(payload))
     try:
-        if profile.get("apiMode") != "responses" and profile.get("codexCli") and output_count > 1:
+        if profile.get("apiMode") != "responses" and not input_images and output_count > 1:
             return call_openai_images_task_concurrent(payload, output_count)
         return call_openai_task_single(payload)
     except TaskExecutionError as exc:
@@ -193,42 +195,86 @@ def call_openai_images_task_concurrent(payload: dict[str, Any], output_count: in
         "params": {
             **payload["params"],
             "n": 1,
-            "quality": "auto",
+            **({"quality": "auto"} if payload["profile"].get("codexCli") else {}),
         },
     }
-    results: list[dict[str, Any]] = []
-    errors: list[BaseException] = []
+    indexed_results: list[tuple[int, dict[str, Any]]] = []
+    indexed_errors: list[dict[str, Any]] = []
 
-    with ThreadPoolExecutor(max_workers=min(output_count, 8)) as executor:
-        futures = [executor.submit(call_openai_task_single, single_payload) for _ in range(output_count)]
+    with ThreadPoolExecutor(max_workers=output_count) as executor:
+        futures = {
+            executor.submit(call_openai_task_single_with_retry, single_payload, index): index
+            for index in range(output_count)
+        }
         for future in as_completed(futures):
             try:
-                results.append(future.result())
+                indexed_results.append(future.result())
             except BaseException as exc:
-                errors.append(exc)
+                indexed_errors.append(error_to_partial_failure(futures[future], exc))
 
-    if not results:
-        if errors:
-            raise errors[0]
+    if not indexed_results:
+        if indexed_errors:
+            first_error = indexed_errors[0]
+            raise TaskExecutionError(
+                str(first_error.get("errorCode") or "UPSTREAM_EMPTY_RESULT"),
+                str(first_error.get("message") or "All concurrent image requests failed"),
+                True,
+            )
         raise TaskExecutionError("UPSTREAM_EMPTY_RESULT", "All concurrent image requests failed", True)
 
     images: list[str] = []
     actual_params_list: list[dict[str, Any]] = []
     revised_prompts: list[str | None] = []
-    for result in results:
+    for _index, result in sorted(indexed_results, key=lambda item: item[0]):
         result_images = result.get("images") or []
         images.extend(result_images)
         actual_params_list.extend(result.get("actualParamsList") or [result.get("actualParams") or {} for _ in result_images])
         revised_prompts.extend(result.get("revisedPrompts") or [None for _ in result_images])
 
+    partial_errors = sorted(indexed_errors, key=lambda item: int(item.get("index", 0)))
     return {
         "images": images,
         "actualParams": {
-            **(results[0].get("actualParams") or {}),
+            **(indexed_results[0][1].get("actualParams") or {}),
             "n": len(images),
         },
         "actualParamsList": actual_params_list,
         "revisedPrompts": revised_prompts,
+        "requestedCount": output_count,
+        "failedCount": len(partial_errors),
+        "partialErrors": partial_errors,
+    }
+
+
+def call_openai_task_single_with_retry(payload: dict[str, Any], index: int) -> tuple[int, dict[str, Any]]:
+    last_error: BaseException | None = None
+    for attempt in range(1, MULTI_IMAGE_SINGLE_MAX_ATTEMPTS + 1):
+        try:
+            return index, call_openai_task_single(payload)
+        except TaskExecutionError as exc:
+            last_error = exc
+            if not exc.retryable or attempt >= MULTI_IMAGE_SINGLE_MAX_ATTEMPTS:
+                break
+            raise_if_cancelled(task_id_from_payload(payload))
+        except BaseException as exc:
+            last_error = exc
+            break
+    if last_error:
+        raise last_error
+    raise TaskExecutionError("UPSTREAM_EMPTY_RESULT", "Image request failed without an error", True)
+
+
+def error_to_partial_failure(index: int, exc: BaseException) -> dict[str, Any]:
+    if isinstance(exc, TaskExecutionError):
+        return {
+            "index": index,
+            "errorCode": exc.code,
+            "message": str(exc),
+        }
+    return {
+        "index": index,
+        "errorCode": "INTERNAL_WORKER_ERROR",
+        "message": str(exc),
     }
 
 

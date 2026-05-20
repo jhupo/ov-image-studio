@@ -517,7 +517,14 @@ async function applyLocalBackendTaskState(taskId: string) {
       elapsed: remoteTask.finishedAt ? Math.max(0, remoteTask.finishedAt - localTask.createdAt) : null,
     })
     clearLocalTaskPollTimer(taskId)
-    useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')
+    const failedCount = remoteTask.result.failedCount ?? 0
+    const requestedCount = remoteTask.result.requestedCount ?? outputIds.length + failedCount
+    useStore.getState().showToast(
+      failedCount > 0
+        ? `生成完成 ${outputIds.length}/${requestedCount}，${failedCount} 张失败`
+        : `生成完成，共 ${outputIds.length} 张图片`,
+      failedCount > 0 ? 'error' : 'success',
+    )
     return
   }
 
