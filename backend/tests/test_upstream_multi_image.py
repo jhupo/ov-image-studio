@@ -12,7 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.upstream import call_openai_task  # noqa: E402
+from app.upstream import call_openai_task, call_openai_task_single_with_retry  # noqa: E402
 
 
 TINY_PNG_DATA_URL = (
@@ -121,3 +121,20 @@ class MultiImageUpstreamTest(TestCase):
             self.assertEqual(kwargs["data"]["model"], "gpt-image-2")
             self.assertNotIn("n", kwargs["data"])
             self.assertEqual(len([item for item in kwargs["files"] if item[0] == "image[]"]), 4)
+
+    @patch("app.upstream.is_task_cancelled", return_value=False)
+    @patch("app.upstream.requests.Session")
+    def test_multi_image_edit_falls_back_to_primary_reference_after_retries(self, session_cls, _cancelled):
+        sessions = [Mock(), Mock(), Mock(), Mock()]
+        sessions[0].request.return_value = bad_response("first edit failure")
+        sessions[1].request.return_value = bad_response("second edit failure")
+        sessions[2].request.return_value = bad_response("third edit failure")
+        sessions[3].request.return_value = ok_response("primary-reference-edit")
+        session_cls.side_effect = sessions
+
+        _index, result = call_openai_task_single_with_retry(payload(1, [TINY_PNG_DATA_URL for _ in range(3)]), 0)
+
+        self.assertEqual(result["images"], ["data:image/png;base64,primary-reference-edit"])
+        fallback_kwargs = sessions[3].request.call_args.kwargs
+        self.assertNotIn("n", fallback_kwargs["data"])
+        self.assertEqual(len([item for item in fallback_kwargs["files"] if item[0] == "image[]"]), 1)

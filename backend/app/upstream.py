@@ -259,9 +259,25 @@ def call_openai_task_single_with_retry(payload: dict[str, Any], index: int) -> t
         except BaseException as exc:
             last_error = exc
             break
+    fallback_payload = fallback_to_primary_input_image(payload)
+    if fallback_payload is not None:
+        try:
+            return index, call_openai_task_single(fallback_payload)
+        except BaseException as exc:
+            last_error = exc
     if last_error:
         raise last_error
     raise TaskExecutionError("UPSTREAM_EMPTY_RESULT", "Image request failed without an error", True)
+
+
+def fallback_to_primary_input_image(payload: dict[str, Any]) -> dict[str, Any] | None:
+    input_images = payload.get("inputImageDataUrls") or []
+    if len(input_images) <= 1:
+        return None
+    return {
+        **payload,
+        "inputImageDataUrls": input_images[:1],
+    }
 
 
 def error_to_partial_failure(index: int, exc: BaseException) -> dict[str, Any]:
