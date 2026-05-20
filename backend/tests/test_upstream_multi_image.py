@@ -15,7 +15,13 @@ if str(BACKEND_DIR) not in sys.path:
 from app.upstream import call_openai_task  # noqa: E402
 
 
-def payload(n: int = 3):
+TINY_PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+
+
+def payload(n: int = 3, input_images: list[str] | None = None):
     return {
         "_taskId": "task-1",
         "profile": {
@@ -34,7 +40,7 @@ def payload(n: int = 3):
             "n": n,
         },
         "prompt": "hello",
-        "inputImageDataUrls": [],
+        "inputImageDataUrls": input_images or [],
     }
 
 
@@ -96,3 +102,22 @@ class MultiImageUpstreamTest(TestCase):
         self.assertEqual(result["failedCount"], 1)
         self.assertEqual(result["partialErrors"][0]["errorCode"], "UPSTREAM_5XX")
         self.assertEqual(result["actualParams"]["n"], 2)
+
+    @patch("app.upstream.is_task_cancelled", return_value=False)
+    @patch("app.upstream.requests.Session")
+    def test_multi_image_edit_splits_into_single_requests_without_n(self, session_cls, _cancelled):
+        sessions = [Mock(), Mock()]
+        for index, session in enumerate(sessions):
+            session.request.return_value = ok_response(f"edited-image-{index}")
+        session_cls.side_effect = sessions
+
+        result = call_openai_task(payload(2, [TINY_PNG_DATA_URL for _ in range(4)]))
+
+        self.assertEqual(len(result["images"]), 2)
+        self.assertEqual(result["requestedCount"], 2)
+        self.assertEqual(result["failedCount"], 0)
+        for session in sessions:
+            kwargs = session.request.call_args.kwargs
+            self.assertEqual(kwargs["data"]["model"], "gpt-image-2")
+            self.assertNotIn("n", kwargs["data"])
+            self.assertEqual(len([item for item in kwargs["files"] if item[0] == "image[]"]), 4)

@@ -180,7 +180,7 @@ def call_openai_task(payload: dict[str, Any]) -> dict[str, Any]:
     output_count = max(1, int(params.get("n", 1) or 1))
     raise_if_cancelled(task_id_from_payload(payload))
     try:
-        if profile.get("apiMode") != "responses" and not input_images and output_count > 1:
+        if profile.get("apiMode") != "responses" and output_count > 1:
             return call_openai_images_task_concurrent(payload, output_count)
         return call_openai_task_single(payload)
     except TaskExecutionError as exc:
