@@ -5,7 +5,7 @@ import socket
 import uuid
 
 
-DEFAULT_IMAGE_API_URL = os.environ.get("DEFAULT_IMAGE_API_URL", "http://192.168.2.60:8080/v1")
+DEFAULT_IMAGE_API_URL = os.environ.get("DEFAULT_IMAGE_API_URL", "https://dash.ovload.com/v1")
 POSTGRES_DSN = os.environ.get(
     "POSTGRES_DSN",
     "postgresql://postgres:postgres@127.0.0.1:5432/chaincloud_image_studio",

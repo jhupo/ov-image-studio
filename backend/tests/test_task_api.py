@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app import create_app  # noqa: E402
-from app.tasks import append_task_event, cleanup_expired_task_events, public_task, public_task_event  # noqa: E402
+from app.tasks import DEFAULT_IMAGE_API_URL, append_task_event, cleanup_expired_task_events, normalize_task_payload, public_task, public_task_event  # noqa: E402
 
 
 def task_row(**overrides):
@@ -156,6 +156,22 @@ class PublicTaskTest(TestCase):
 
         self.assertEqual(payload["queuePosition"], 2)
         self.assertEqual(payload["queuePositions"], {"user": 2})
+
+
+class TaskPayloadTest(TestCase):
+    def test_normalize_task_payload_uses_backend_default_image_api_url(self):
+        payload = {
+            "profile": {
+                "provider": "openai",
+                "baseUrl": "http://192.168.2.60:8080/v1",
+                "imageApiBaseUrl": "http://192.168.2.60:8080/v1",
+            },
+        }
+
+        normalized = normalize_task_payload(payload)
+
+        self.assertEqual(normalized["profile"]["baseUrl"], DEFAULT_IMAGE_API_URL)
+        self.assertEqual(normalized["profile"]["imageApiBaseUrl"], DEFAULT_IMAGE_API_URL)
 
 
 class TaskEventsTest(TestCase):

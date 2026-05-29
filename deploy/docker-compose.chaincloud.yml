@@ -11,7 +11,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-http://127.0.0.1:8080/v1}
+      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-https://dash.ovload.com/v1}
       IMAGE_STUDIO_PORT: ${IMAGE_STUDIO_PORT:-8787}
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -29,7 +29,7 @@ services:
         condition: service_healthy
     command: ["python3", "/opt/app/backend/worker.py"]
     environment:
-      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-http://127.0.0.1:8080/v1}
+      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-https://dash.ovload.com/v1}
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       IMAGE_STUDIO_WORKER_COUNT: ${IMAGE_STUDIO_WORKER_COUNT:-20}

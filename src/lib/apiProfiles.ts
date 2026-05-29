@@ -1,7 +1,7 @@
 import type { ApiMode, AppSettings, RuntimeApiProfile } from '../types'
 import { readRuntimeEnv } from './runtimeEnv'
 
-export const DEFAULT_IMAGE_API_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_IMAGE_API_URL) || 'http://192.168.2.60:8080/v1'
+export const DEFAULT_IMAGE_API_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_IMAGE_API_URL) || 'https://dash.ovload.com/v1'
 export const DEFAULT_BASE_URL = DEFAULT_IMAGE_API_BASE_URL
 export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-5.5'

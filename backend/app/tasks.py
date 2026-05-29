@@ -7,7 +7,7 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
-from .config import MAX_RETRIES, PAYLOAD_KEY_PREFIX, PAYLOAD_TTL_SECONDS, RESULT_KEY_PREFIX, RESULT_TTL_SECONDS, TASK_EVENT_TTL_SECONDS, TASK_METADATA_TTL_SECONDS
+from .config import DEFAULT_IMAGE_API_URL, MAX_RETRIES, PAYLOAD_KEY_PREFIX, PAYLOAD_TTL_SECONDS, RESULT_KEY_PREFIX, RESULT_TTL_SECONDS, TASK_EVENT_TTL_SECONDS, TASK_METADATA_TTL_SECONDS
 from .db import db_conn, redis_client
 from .fingerprints import api_key_fingerprint, profile_fingerprint
 from .queue import queue_positions, queue_task
@@ -48,6 +48,18 @@ def validate_task_payload(payload: dict[str, Any]) -> str | None:
         if compression < 0 or compression > 100:
             return "params.output_compression must be between 0 and 100"
     return None
+
+
+def normalize_task_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    clean = dict(payload)
+    profile = clean.get("profile")
+    if isinstance(profile, dict) and profile.get("provider") == "openai":
+        clean["profile"] = {
+            **profile,
+            "baseUrl": DEFAULT_IMAGE_API_URL,
+            "imageApiBaseUrl": DEFAULT_IMAGE_API_URL,
+        }
+    return clean
 
 
 def payload_key(task_id: str) -> str:
@@ -298,6 +310,7 @@ def list_task_events(task_id: str, limit: int = 50) -> list[dict[str, Any]]:
 
 
 def create_task(payload: dict[str, Any], idempotency_key: str | None) -> dict[str, Any]:
+    payload = normalize_task_payload(payload)
     error = validate_task_payload(payload)
     if error:
         raise ValueError(error)
