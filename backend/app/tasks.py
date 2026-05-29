@@ -103,7 +103,7 @@ def store_task_payload(task_id: str, payload: dict[str, Any]) -> None:
 
 def load_task_payload(task_id: str) -> dict[str, Any] | None:
     raw = redis_client.get(payload_key(task_id))
-    return json.loads(raw) if raw else None
+    return normalize_task_payload(json.loads(raw)) if raw else None
 
 
 def delete_task_payload(task_id: str) -> None:

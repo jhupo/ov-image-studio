@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app import create_app  # noqa: E402
-from app.tasks import DEFAULT_IMAGE_API_URL, append_task_event, cleanup_expired_task_events, normalize_task_payload, public_task, public_task_event  # noqa: E402
+from app.tasks import DEFAULT_IMAGE_API_URL, append_task_event, cleanup_expired_task_events, load_task_payload, normalize_task_payload, public_task, public_task_event  # noqa: E402
 
 
 def task_row(**overrides):
@@ -172,6 +172,18 @@ class TaskPayloadTest(TestCase):
 
         self.assertEqual(normalized["profile"]["baseUrl"], DEFAULT_IMAGE_API_URL)
         self.assertEqual(normalized["profile"]["imageApiBaseUrl"], DEFAULT_IMAGE_API_URL)
+
+    @patch("app.tasks.redis_client")
+    def test_load_task_payload_normalizes_stored_legacy_base_url(self, redis_client):
+        redis_client.get.return_value = (
+            '{"profile":{"provider":"openai","baseUrl":"http://192.168.2.60:8080/v1",'
+            '"imageApiBaseUrl":"http://192.168.2.60:8080/v1"}}'
+        )
+
+        payload = load_task_payload("task-1")
+
+        self.assertEqual(payload["profile"]["baseUrl"], DEFAULT_IMAGE_API_URL)
+        self.assertEqual(payload["profile"]["imageApiBaseUrl"], DEFAULT_IMAGE_API_URL)
 
 
 class TaskEventsTest(TestCase):
