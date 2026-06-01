@@ -36,6 +36,7 @@ from .tasks import (
 )
 from .timeutil import now_ms
 from .upstream import TaskExecutionError, call_openai_task
+from .upscale import upscale_result_if_needed
 
 logger = logging.getLogger("image_studio.worker")
 
@@ -351,6 +352,7 @@ def execute_claimed_task(task: dict) -> None:
         append_task_event(task["id"], "upstream_request", metadata={"workerId": WORKER_ID})
         payload = {**payload, "_taskId": task["id"]}
         result = call_openai_task(payload)
+        result = upscale_result_if_needed(payload, result, stage_callback=lambda event_type, message, metadata: record_upscale_stage(task["id"], event_type, message, metadata))
         finish_task(task, "succeeded", result=result)
         delete_task_payload(task["id"])
     except TaskExecutionError as exc:
@@ -359,6 +361,20 @@ def execute_claimed_task(task: dict) -> None:
         retry_or_fail_task(task, TaskExecutionError("INTERNAL_WORKER_ERROR", str(exc), False))
     finally:
         stop.set()
+
+
+def record_upscale_stage(task_id: str, event_type: str, message: str | None, metadata: dict | None) -> None:
+    metadata = metadata or {}
+    update_task(
+        task_id,
+        result_payload={
+            "phase": "upscaling",
+            "phaseStartedAt": now_ms(),
+            "message": message,
+            "metadata": {key: metadata[key] for key in ("imageIndex", "sourceSize", "targetSize") if key in metadata},
+        },
+    )
+    append_task_event(task_id, event_type, message=message, metadata={**metadata, "workerId": WORKER_ID})
 
 
 def worker_loop() -> None:

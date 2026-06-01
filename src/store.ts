@@ -26,7 +26,7 @@ import {
   putSettings as dbPutSettings,
 } from './lib/db'
 import { cancelImageTask, createImageTask, getImageTask, retryImageTask, type ImageTask } from './lib/taskApi'
-import { validateMaskMatchesImage } from './lib/canvasImage'
+import { getImageDimensions, validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
 import { getEmbeddedRequesterId, getLocalClientRequesterId } from './lib/clientIdentity'
@@ -441,6 +441,47 @@ function backendTaskPatch(remoteTask: ImageTask): Partial<TaskRecord> {
   }
 }
 
+async function getMeasuredImageSize(dataUrl: string): Promise<string | undefined> {
+  try {
+    const dimensions = await getImageDimensions(dataUrl)
+    if (dimensions.width > 0 && dimensions.height > 0) {
+      return `${dimensions.width}x${dimensions.height}`
+    }
+  } catch (error) {
+    console.warn('Failed to measure generated image dimensions', error)
+  }
+  return undefined
+}
+
+function mergeImageActualParams(
+  actualParams: Partial<TaskParams> | undefined,
+  measuredSize: string | undefined,
+): Partial<TaskParams> | undefined {
+  const merged = { ...(actualParams ?? {}) }
+  if (measuredSize) merged.size = measuredSize
+  return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+function aggregateGeneratedActualParams(
+  actualParams: Partial<TaskParams> | undefined,
+  perImageActualParams: Array<Partial<TaskParams> | undefined>,
+  outputCount: number,
+): Partial<TaskParams> {
+  const merged: Partial<TaskParams> = { ...(actualParams ?? {}), n: outputCount }
+  const measuredSizes = perImageActualParams
+    .map((params) => params?.size)
+    .filter((size): size is string => Boolean(size))
+
+  if (measuredSizes.length === perImageActualParams.length) {
+    const uniqueSizes = new Set(measuredSizes)
+    if (uniqueSizes.size === 1) {
+      merged.size = measuredSizes[0]
+    }
+  }
+
+  return merged
+}
+
 export function showCodexCliPrompt(force = false, reason = '鎺ュ彛杩斿洖鐨勬彁绀鸿瘝宸茶鏀瑰啓') {
   const state = useStore.getState()
   const settings = state.settings
@@ -487,13 +528,20 @@ async function applyLocalBackendTaskState(taskId: string) {
 
   if (remoteTask.status === 'succeeded' && remoteTask.result?.images?.length) {
     const outputIds: string[] = []
-    for (const dataUrl of remoteTask.result.images) {
+    const imageActualParamsList: Array<Partial<TaskParams> | undefined> = []
+    for (const [index, dataUrl] of remoteTask.result.images.entries()) {
+      const measuredSize = await getMeasuredImageSize(dataUrl)
+      const imageActualParams = mergeImageActualParams(
+        remoteTask.result.actualParamsList?.[index] ?? remoteTask.result.actualParams,
+        measuredSize,
+      )
       const imgId = await storeImage(dataUrl, 'generated')
       imageCache.set(imgId, dataUrl)
       outputIds.push(imgId)
+      imageActualParamsList.push(imageActualParams)
     }
 
-    const actualParamsByImage = remoteTask.result.actualParamsList?.reduce<Record<string, Partial<TaskParams>>>((acc, params, index) => {
+    const actualParamsByImage = imageActualParamsList.reduce<Record<string, Partial<TaskParams>>>((acc, params, index) => {
       const imgId = outputIds[index]
       if (imgId && params && Object.keys(params).length > 0) acc[imgId] = params
       return acc
@@ -509,7 +557,7 @@ async function applyLocalBackendTaskState(taskId: string) {
       status: 'done',
       backendQueuePosition: null,
       outputImages: outputIds,
-      actualParams: remoteTask.result.actualParams ? { ...remoteTask.result.actualParams, n: outputIds.length } : undefined,
+      actualParams: aggregateGeneratedActualParams(remoteTask.result.actualParams, imageActualParamsList, outputIds.length),
       actualParamsByImage: actualParamsByImage && Object.keys(actualParamsByImage).length > 0 ? actualParamsByImage : undefined,
       revisedPromptByImage: revisedPromptByImage && Object.keys(revisedPromptByImage).length > 0 ? revisedPromptByImage : undefined,
       error: null,

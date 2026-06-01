@@ -1,0 +1,22 @@
+[Unit]
+Description=Chaincloud image upscaler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/chaincloud-image-upscaler/upscaler
+Environment=UPSCALER_PORT=8790
+Environment=UPSCALER_WORK_DIR=/opt/chaincloud-image-upscaler/jobs
+Environment=UPSCALER_WORKERS=1
+Environment=UPSCALER_ENGINE=realesrgan
+Environment="UPSCALER_COMMAND=/opt/realesrgan-ncnn-vulkan/main/realesrgan-ncnn-vulkan -i {input} -o {output} -n realesrgan-x4plus -s {scale} -t 256 -m /opt/realesrgan-ncnn-vulkan/main/models -f png"
+Environment=UPSCALER_ALLOW_RESIZE_FALLBACK=false
+Environment=UPSCALER_JOB_TTL_SECONDS=3600
+Environment=UPSCALER_JOB_TIMEOUT_SECONDS=3600
+ExecStart=/opt/chaincloud-image-upscaler/.venv/bin/gunicorn --bind 0.0.0.0:8790 --workers 1 --threads 4 --timeout 7200 server:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

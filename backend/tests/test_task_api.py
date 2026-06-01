@@ -157,6 +157,20 @@ class PublicTaskTest(TestCase):
         self.assertEqual(payload["queuePosition"], 2)
         self.assertEqual(payload["queuePositions"], {"user": 2})
 
+    @patch("app.tasks.redis_ttl_seconds", return_value=60)
+    @patch("app.tasks.queue_positions", return_value={"global": None, "user": None, "apiKey": None, "profile": None})
+    def test_public_task_uses_running_phase_override_from_result_payload(self, _positions, _ttl):
+        row = task_row(
+            status="running",
+            started_at=1000,
+            result_payload={"phase": "upscaling", "phaseStartedAt": 2000, "message": "processing"},
+        )
+
+        payload = public_task(row)
+
+        self.assertEqual(payload["phase"], "upscaling")
+        self.assertEqual(payload["phaseStartedAt"], 2000)
+
 
 class TaskPayloadTest(TestCase):
     def test_normalize_task_payload_uses_backend_default_image_api_url(self):

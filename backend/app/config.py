@@ -5,7 +5,7 @@ import socket
 import uuid
 
 
-DEFAULT_IMAGE_API_URL = os.environ.get("DEFAULT_IMAGE_API_URL", "https://dash.ovload.com/v1")
+DEFAULT_IMAGE_API_URL = os.environ.get("DEFAULT_IMAGE_API_URL", "https://dash.classicriver.cn/v1")
 POSTGRES_DSN = os.environ.get(
     "POSTGRES_DSN",
     "postgresql://postgres:postgres@127.0.0.1:5432/chaincloud_image_studio",
@@ -36,6 +36,12 @@ TASK_METADATA_TTL_SECONDS = int(os.environ.get("IMAGE_STUDIO_TASK_METADATA_TTL_S
 TASK_EVENT_TTL_SECONDS = int(os.environ.get("IMAGE_STUDIO_TASK_EVENT_TTL_SECONDS", str(3 * 86400)))
 CLEANUP_INTERVAL_SECONDS = int(os.environ.get("IMAGE_STUDIO_CLEANUP_INTERVAL_SECONDS", "3600"))
 REBUILD_QUEUE_ON_START = os.environ.get("IMAGE_STUDIO_REBUILD_QUEUE_ON_START", "true").lower() in {"1", "true", "yes"}
+UPSCALER_URL = os.environ.get("IMAGE_STUDIO_UPSCALER_URL", "").rstrip("/")
+UPSCALER_TOKEN = os.environ.get("IMAGE_STUDIO_UPSCALER_TOKEN", "")
+UPSCALER_POLL_INTERVAL_SECONDS = float(os.environ.get("IMAGE_STUDIO_UPSCALER_POLL_INTERVAL_SECONDS", "3"))
+UPSCALER_TIMEOUT_SECONDS = int(os.environ.get("IMAGE_STUDIO_UPSCALER_TIMEOUT_SECONDS", "3600"))
+UPSCALER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("IMAGE_STUDIO_UPSCALER_REQUEST_TIMEOUT_SECONDS", "60"))
+UPSCALER_DELETE_REMOTE_RESULT = os.environ.get("IMAGE_STUDIO_UPSCALER_DELETE_REMOTE_RESULT", "true").lower() in {"1", "true", "yes"}
 
 TERMINAL_STATES = {"succeeded", "failed", "canceled"}
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"

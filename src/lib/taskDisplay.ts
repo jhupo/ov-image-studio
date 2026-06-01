@@ -12,6 +12,7 @@ export const BACKEND_PHASE_LABELS: Record<string, string> = {
   queued: '排队中',
   retry_waiting: '等待重试',
   running: '请求上游',
+  upscaling: '无损处理中',
   succeeded: '已完成',
   failed: '失败',
   canceled: '已取消',
@@ -27,6 +28,10 @@ const ERROR_LABELS: Record<string, string> = {
   UPSTREAM_BAD_RESPONSE: '上游返回异常',
   IMAGE_DOWNLOAD_TIMEOUT: '图片下载超时',
   IMAGE_DOWNLOAD_FAILED: '图片下载失败',
+  UPSCALER_UNAVAILABLE: '无损处理服务不可用',
+  UPSCALER_TIMEOUT: '无损处理超时',
+  UPSCALER_FAILED: '无损处理失败',
+  UPSCALER_BAD_RESPONSE: '无损处理服务返回异常',
   PAYLOAD_EXPIRED: '任务输入已过期，请重新创建任务',
   LEASE_EXPIRED: 'Worker 租约过期，任务已重新排队',
   INTERNAL_WORKER_ERROR: '后端 Worker 内部错误',
@@ -38,6 +43,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   rate_limited: '限流',
   upstream_unavailable: '上游不可用',
   image_download_failed: '图片下载失败',
+  upscaler_failed: '无损处理失败',
   payload_expired: '输入已过期',
   upstream_bad_response: '上游响应异常',
   canceled: '已取消',
@@ -52,6 +58,9 @@ const EVENT_LABELS: Record<string, string> = {
   created: '已创建',
   claimed: '已进入运行',
   upstream_request: '正在请求上游',
+  upscale_request: '图片已生成，正在无损处理',
+  upscale_started: '无损处理已开始',
+  upscale_succeeded: '无损处理完成',
   concurrency_waiting: '等待可用队列',
   succeeded: '生成成功',
   failed: '生成失败',
@@ -109,7 +118,10 @@ export function getRunningTaskLabel(task: TaskRecord) {
     if (task.backendPhase === 'retry_waiting') return '正在重试'
     return task.backendQueuePosition ? `排队 #${task.backendQueuePosition}` : '排队中'
   }
-  if (task.backendStatus === 'running') return '生成中'
+  if (task.backendStatus === 'running') {
+    if (task.backendPhase && task.backendPhase !== 'running') return formatBackendPhase(task.backendPhase)
+    return '生成中'
+  }
   return task.backendTaskId ? formatBackendStatus(task.backendStatus) : '生成中'
 }
 

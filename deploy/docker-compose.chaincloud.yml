@@ -11,10 +11,12 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-https://dash.ovload.com/v1}
+      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-https://dash.classicriver.cn/v1}
       IMAGE_STUDIO_PORT: ${IMAGE_STUDIO_PORT:-8787}
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      IMAGE_STUDIO_UPSCALER_URL: ${IMAGE_STUDIO_UPSCALER_URL:-}
+      IMAGE_STUDIO_UPSCALER_TOKEN: ${IMAGE_STUDIO_UPSCALER_TOKEN:-}
     ports:
       - "${IMAGE_STUDIO_HTTP_PORT:-80}:80"
     restart: unless-stopped
@@ -29,9 +31,15 @@ services:
         condition: service_healthy
     command: ["python3", "/opt/app/backend/worker.py"]
     environment:
-      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-https://dash.ovload.com/v1}
+      DEFAULT_IMAGE_API_URL: ${DEFAULT_IMAGE_API_URL:-https://dash.classicriver.cn/v1}
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://chaincloud:chaincloud@postgres:5432/chaincloud_image_studio}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      IMAGE_STUDIO_UPSCALER_URL: ${IMAGE_STUDIO_UPSCALER_URL:-}
+      IMAGE_STUDIO_UPSCALER_TOKEN: ${IMAGE_STUDIO_UPSCALER_TOKEN:-}
+      IMAGE_STUDIO_UPSCALER_POLL_INTERVAL_SECONDS: ${IMAGE_STUDIO_UPSCALER_POLL_INTERVAL_SECONDS:-3}
+      IMAGE_STUDIO_UPSCALER_TIMEOUT_SECONDS: ${IMAGE_STUDIO_UPSCALER_TIMEOUT_SECONDS:-3600}
+      IMAGE_STUDIO_UPSCALER_REQUEST_TIMEOUT_SECONDS: ${IMAGE_STUDIO_UPSCALER_REQUEST_TIMEOUT_SECONDS:-60}
+      IMAGE_STUDIO_UPSCALER_DELETE_REMOTE_RESULT: ${IMAGE_STUDIO_UPSCALER_DELETE_REMOTE_RESULT:-true}
       IMAGE_STUDIO_WORKER_COUNT: ${IMAGE_STUDIO_WORKER_COUNT:-20}
       IMAGE_STUDIO_MAX_CONCURRENT: ${IMAGE_STUDIO_MAX_CONCURRENT:-80}
       IMAGE_STUDIO_MAX_CONCURRENT_PER_USER: ${IMAGE_STUDIO_MAX_CONCURRENT_PER_USER:-20}

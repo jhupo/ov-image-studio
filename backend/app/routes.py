@@ -24,6 +24,9 @@ from .config import (
     TASK_METADATA_TTL_SECONDS,
     TASK_TIMEOUT_SECONDS,
     TERMINAL_STATES,
+    UPSCALER_DELETE_REMOTE_RESULT,
+    UPSCALER_TIMEOUT_SECONDS,
+    UPSCALER_URL,
     WORKER_COUNT,
     WORKER_ID,
 )
@@ -150,6 +153,9 @@ def health():
                     "taskMetadataTtlSeconds": TASK_METADATA_TTL_SECONDS,
                     "taskEventTtlSeconds": TASK_EVENT_TTL_SECONDS,
                     "cleanupIntervalSeconds": CLEANUP_INTERVAL_SECONDS,
+                    "upscalerUrl": UPSCALER_URL,
+                    "upscalerTimeoutSeconds": UPSCALER_TIMEOUT_SECONDS,
+                    "upscalerDeleteRemoteResult": UPSCALER_DELETE_REMOTE_RESULT,
                 },
             },
         }

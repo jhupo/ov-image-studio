@@ -93,6 +93,7 @@ def summarize_result_payload(result: dict[str, Any] | None) -> dict[str, Any] | 
         "actualParams": result.get("actualParams") or {},
         "actualParamsList": result.get("actualParamsList") or [],
         "revisedPrompts": result.get("revisedPrompts") or [],
+        "upscale": result.get("upscale") or None,
         "imagesStored": "redis_ttl",
     }
 
@@ -136,7 +137,14 @@ def public_task(task: dict[str, Any], include_result: bool = False) -> dict[str,
         result = task.get("result_payload")
     if isinstance(result, str):
         result = json.loads(result)
+    if not isinstance(result, dict):
+        result = None
     metrics = task_phase_metrics(task)
+    phase = metrics["phase"]
+    phase_started_at = metrics["phase_started_at"]
+    if task["status"] == "running" and result:
+        phase = str(result.get("phase") or phase)
+        phase_started_at = result.get("phaseStartedAt") or phase_started_at
     positions = queue_positions(task)
     public_queue_position = positions["user"]
     return {
@@ -160,8 +168,8 @@ def public_task(task: dict[str, Any], include_result: bool = False) -> dict[str,
         "canceledAt": task.get("canceled_at"),
         "leaseOwner": task.get("lease_owner"),
         "leaseExpiresAt": task.get("lease_expires_at"),
-        "phase": metrics["phase"],
-        "phaseStartedAt": metrics["phase_started_at"],
+        "phase": phase,
+        "phaseStartedAt": phase_started_at,
         "queuedMs": metrics["queued_ms"],
         "runningMs": metrics["running_ms"],
         "totalMs": metrics["total_ms"],
@@ -184,6 +192,8 @@ def error_category(error_code: str | None, error_message: str | None = None) -> 
         return "upstream_unavailable"
     if code in {"IMAGE_DOWNLOAD_TIMEOUT", "IMAGE_DOWNLOAD_FAILED"}:
         return "image_download_failed"
+    if code in {"UPSCALER_UNAVAILABLE", "UPSCALER_TIMEOUT", "UPSCALER_FAILED", "UPSCALER_BAD_RESPONSE"}:
+        return "upscaler_failed"
     if code == "PAYLOAD_EXPIRED":
         return "payload_expired"
     if code in {"UPSTREAM_EMPTY_RESULT", "UPSTREAM_BAD_RESPONSE"}:
@@ -274,7 +284,20 @@ def append_task_event(task_id: str, event_type: str, message: str | None = None,
         conn.commit()
 
 
-SAFE_EVENT_METADATA_KEYS = {"retryCount", "maxRetries", "delaySeconds", "errorCode", "imageCount", "stage", "waitReason"}
+SAFE_EVENT_METADATA_KEYS = {
+    "retryCount",
+    "maxRetries",
+    "delaySeconds",
+    "errorCode",
+    "imageCount",
+    "stage",
+    "waitReason",
+    "imageIndex",
+    "sourceSize",
+    "targetSize",
+    "jobId",
+    "processedCount",
+}
 
 
 def public_task_event(event: dict[str, Any]) -> dict[str, Any]:
