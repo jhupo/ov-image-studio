@@ -20,9 +20,10 @@ Use the page origin instead when the frontend is served from the same host.
 4. When `status` is `succeeded`, fetch once more with `includeResult=1`.
 5. Store or render `result.images[]`, which are data URLs.
 
-When the upstream image is generated but its real dimensions do not match the
-requested dimensions, `phase` changes to `upscaling`. The frontend should keep
-polling and show a message such as `图片已生成，正在无损处理`.
+When `upscale.enabled=true` and the upstream image is generated but its real
+dimensions do not match the requested dimensions, `phase` changes to
+`upscaling`. The frontend should keep polling and show a message such as
+`图片已生成，正在无损处理`.
 
 ## Create Task
 
@@ -60,6 +61,9 @@ Body:
     "apiMode": "images",
     "codexCli": false
   },
+  "upscale": {
+    "enabled": false
+  },
   "inputImageDataUrls": []
 }
 ```
@@ -88,6 +92,8 @@ Validation notes:
 - `params.quality` must be `auto`, `low`, `medium`, or `high`.
 - `params.moderation` must be `auto` or `low`.
 - `params.n` must be between `1` and `16`.
+- `upscale.enabled` is optional and defaults to `false`. When it is `true`,
+  31 sends mismatched upstream images to the 68 super-resolution service.
 - The backend normalizes the upstream base URL to the deployed 31 setting, so
   callers should still send profile URLs but should not call the upstream directly.
 

@@ -80,10 +80,12 @@ function createSubmissionKey(input: {
   inputImageIds: string[]
   maskTargetImageId: string | null
   maskDataUrl?: string | null
+  losslessUpscale: boolean
 }) {
   return hashText(stableStringify({
     prompt: input.prompt.trim(),
     params: input.params,
+    losslessUpscale: input.losslessUpscale,
     model: input.profile.model,
     apiMode: input.profile.apiMode,
     apiKeyHash: hashText(input.profile.apiKey.trim()),
@@ -657,6 +659,7 @@ async function executeTaskViaLocalBackend(taskId: string) {
     profile: activeProfile,
     inputImageDataUrls,
     maskDataUrl: maskDataUrl || undefined,
+    upscale: { enabled: Boolean(task.losslessUpscale) },
   }, task.backendIdempotencyKey ?? taskId)
 
   updateTaskInStore(taskId, {
@@ -795,6 +798,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     inputImageIds: orderedInputImages.map((image) => image.id),
     maskTargetImageId,
     maskDataUrl: maskDraft?.maskDataUrl ?? null,
+    losslessUpscale: settings.losslessUpscale,
   })
   const now = Date.now()
   clearExpiredSubmissionLocks(now)
@@ -844,6 +848,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     inputImageIds: orderedInputImages.map((i) => i.id),
     maskTargetImageId,
     maskImageId,
+    losslessUpscale: settings.losslessUpscale,
     outputImages: [],
     status: 'running',
     error: null,
@@ -923,6 +928,7 @@ export async function retryTask(task: TaskRecord) {
     inputImageIds: [...task.inputImageIds],
     maskTargetImageId: task.maskTargetImageId ?? null,
     maskImageId: task.maskImageId ?? null,
+    losslessUpscale: settings.losslessUpscale,
     outputImages: [],
     status: 'running',
     error: null,

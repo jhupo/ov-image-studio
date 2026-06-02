@@ -18,9 +18,11 @@ describe('settings normalization', () => {
       apiMode: 'responses',
       codexCli: true,
       clearInputAfterSubmit: true,
+      losslessUpscale: true,
       embeddedApiKeyId: 12,
       baseUrl: 'https://legacy.example/v1',
       model: 'legacy-model',
+      upscale: { enabled: true },
     })
 
     expect(settings).toEqual({
@@ -28,8 +30,13 @@ describe('settings normalization', () => {
       apiMode: 'responses',
       codexCli: true,
       clearInputAfterSubmit: true,
+      losslessUpscale: true,
       embeddedApiKeyId: 12,
     })
+  })
+
+  it('defaults lossless upscaling to off', () => {
+    expect(normalizeSettings({ apiKey: 'sk-test' }).losslessUpscale).toBe(false)
   })
 
   it('can read an OpenAI key from legacy profile exports', () => {

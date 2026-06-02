@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiMode: 'images',
   codexCli: false,
   clearInputAfterSubmit: false,
+  losslessUpscale: false,
   embeddedApiKeyId: null,
 }
 
@@ -58,6 +59,9 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     clearInputAfterSubmit: typeof record.clearInputAfterSubmit === 'boolean'
       ? record.clearInputAfterSubmit
       : DEFAULT_SETTINGS.clearInputAfterSubmit,
+    losslessUpscale: typeof record.losslessUpscale === 'boolean'
+      ? record.losslessUpscale
+      : DEFAULT_SETTINGS.losslessUpscale,
     embeddedApiKeyId: typeof record.embeddedApiKeyId === 'number' && Number.isFinite(record.embeddedApiKeyId)
       ? record.embeddedApiKeyId
       : DEFAULT_SETTINGS.embeddedApiKeyId,

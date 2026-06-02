@@ -31,14 +31,17 @@ def png_data_url(width: int, height: int) -> str:
     return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
 
-def payload(size: str = "2x2"):
-    return {
+def payload(size: str = "2x2", upscale_enabled: bool = False):
+    task_payload = {
         "params": {
             "size": size,
             "quality": "high",
             "output_format": "png",
         }
     }
+    if upscale_enabled:
+        task_payload["upscale"] = {"enabled": True}
+    return task_payload
 
 
 class UpscaleHelpersTest(TestCase):
@@ -52,6 +55,16 @@ class UpscaleHelpersTest(TestCase):
         self.assertEqual(result["images"][0], png_data_url(1, 1))
         self.assertEqual(result["actualParams"]["size"], "1x1")
         self.assertEqual(result["actualParamsList"][0]["size"], "1x1")
+
+    @patch("app.upscale.UPSCALER_URL", "http://upscaler.test")
+    @patch("app.upscale.requests")
+    def test_does_not_upscale_when_setting_is_disabled(self, requests_mock):
+        result = upscale_result_if_needed(payload("2x2"), {"images": [png_data_url(1, 1)]})
+
+        self.assertEqual(result["images"][0], png_data_url(1, 1))
+        self.assertEqual(result["actualParams"]["size"], "1x1")
+        self.assertNotIn("upscale", result)
+        requests_mock.post.assert_not_called()
 
     @patch("app.upscale.UPSCALER_DELETE_REMOTE_RESULT", True)
     @patch("app.upscale.UPSCALER_POLL_INTERVAL_SECONDS", 0.01)
@@ -76,7 +89,7 @@ class UpscaleHelpersTest(TestCase):
 
         events: list[str] = []
         result = upscale_result_if_needed(
-            payload("2x2"),
+            payload("2x2", upscale_enabled=True),
             {"images": [png_data_url(1, 1)], "actualParams": {"quality": "high"}},
             stage_callback=lambda event_type, _message, _metadata: events.append(event_type),
         )

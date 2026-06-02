@@ -66,6 +66,7 @@ export function putSettings(settings: AppSettings): Promise<IDBValidKey> {
       apiMode: settings.apiMode,
       codexCli: settings.codexCli,
       clearInputAfterSubmit: settings.clearInputAfterSubmit,
+      losslessUpscale: settings.losslessUpscale,
       embeddedApiKeyId: settings.embeddedApiKeyId,
     },
     updatedAt: Date.now(),

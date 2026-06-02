@@ -7,6 +7,7 @@ export interface UserSettings {
   apiMode: ApiMode
   codexCli: boolean
   clearInputAfterSubmit: boolean
+  losslessUpscale: boolean
   embeddedApiKeyId: number | null
 }
 
@@ -131,6 +132,8 @@ export interface TaskRecord {
   elapsed: number | null
   /** 是否收藏 */
   isFavorite?: boolean
+  /** 是否在上游图片尺寸不一致时启用无损放大 */
+  losslessUpscale?: boolean
 }
 
 export interface BackendTaskEvent {

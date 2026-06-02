@@ -47,6 +47,13 @@ def validate_task_payload(payload: dict[str, Any]) -> str | None:
             return "params.output_compression must be an integer"
         if compression < 0 or compression > 100:
             return "params.output_compression must be between 0 and 100"
+    upscale = payload.get("upscale")
+    if upscale is not None:
+        if not isinstance(upscale, dict):
+            return "upscale must be an object"
+        enabled = upscale.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            return "upscale.enabled must be a boolean"
     return None
 
 

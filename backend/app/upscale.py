@@ -140,12 +140,18 @@ def merge_actual_params_size(
         result["actualParamsList"] = actual_params_list
 
 
+def is_upscale_enabled(payload: dict[str, Any]) -> bool:
+    upscale = payload.get("upscale")
+    return isinstance(upscale, dict) and upscale.get("enabled") is True
+
+
 def upscale_result_if_needed(payload: dict[str, Any], result: dict[str, Any], stage_callback: StageCallback | None = None) -> dict[str, Any]:
     target = parse_size((payload.get("params") or {}).get("size"))
     images = result.get("images") or []
     if not target or not images:
         return result
 
+    enabled = is_upscale_enabled(payload)
     target_width, target_height = target
     target_size = format_size(target_width, target_height)
     output_format = str((payload.get("params") or {}).get("output_format") or "png")
@@ -168,7 +174,7 @@ def upscale_result_if_needed(payload: dict[str, Any], result: dict[str, Any], st
             per_image_sizes.append(source_size)
             continue
 
-        if not UPSCALER_URL:
+        if not enabled or not UPSCALER_URL:
             updated_images.append(image)
             per_image_sizes.append(source_size)
             continue

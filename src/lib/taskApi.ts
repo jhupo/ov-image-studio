@@ -7,6 +7,9 @@ export interface ImageTaskRequest {
   profile: RuntimeApiProfile
   inputImageDataUrls: string[]
   maskDataUrl?: string
+  upscale?: {
+    enabled: boolean
+  }
 }
 
 export interface ImageTaskResult {
@@ -21,6 +24,11 @@ export interface ImageTaskResult {
   actualParams?: Partial<TaskParams>
   actualParamsList?: Array<Partial<TaskParams>>
   revisedPrompts?: Array<string | null>
+  upscale?: {
+    processedCount?: number
+    targetSize?: string
+    serviceUrl?: string
+  } | null
 }
 
 export interface ImageTask {

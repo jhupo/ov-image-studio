@@ -89,6 +89,15 @@ function UploadIcon() {
   )
 }
 
+function UpscaleIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 4H4v4M16 4h4v4M4 16v4h4M20 16v4h-4" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9L4.5 4.5M15 9l4.5-4.5M9 15l-4.5 4.5M15 15l4.5 4.5" />
+    </svg>
+  )
+}
+
 export default function SettingsModal() {
   const showSettings = useStore((s) => s.showSettings)
   const setShowSettings = useStore((s) => s.setShowSettings)
@@ -279,6 +288,20 @@ export default function SettingsModal() {
               checked={draft.clearInputAfterSubmit}
               onChange={() => patchSettings({ clearInputAfterSubmit: !draft.clearInputAfterSubmit })}
               label="提交后清空输入框"
+            />
+          </div>
+          <div className="border-t border-gray-200/70 dark:border-white/[0.08]" />
+          <div className="flex min-h-[44px] items-center justify-between gap-3 px-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/5 text-blue-500 dark:text-blue-400">
+                <UpscaleIcon />
+              </span>
+              <div className="text-xs font-semibold text-gray-800 dark:text-gray-100">无损放大</div>
+            </div>
+            <Toggle
+              checked={draft.losslessUpscale}
+              onChange={() => patchSettings({ losslessUpscale: !draft.losslessUpscale })}
+              label="无损放大"
             />
           </div>
         </section>
