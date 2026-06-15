@@ -37,6 +37,8 @@ type config struct {
 	MaxUpstreamResultBytes int64
 }
 
+const maxEmbeddedKeysResponseBytes int64 = 10 * 1024 * 1024
+
 type upstreamRequest struct {
 	URL        string            `json:"url"`
 	Method     string            `json:"method"`
@@ -102,6 +104,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/tasks", store.handleTasks)
 	mux.HandleFunc("/api/tasks/", store.handleTask)
+	mux.HandleFunc("/api/v1/keys", store.handleEmbeddedSub2APIKeys)
+	mux.HandleFunc("/api/v1/admin/users/", store.handleEmbeddedSub2APIKeys)
 	mux.Handle("/", spaHandler(cfg.StaticDir))
 
 	addr := net.JoinHostPort(cfg.Host, cfg.Port)
@@ -259,6 +263,66 @@ func (s *taskStore) handleTask(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *taskStore) handleEmbeddedSub2APIKeys(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
+		writeJSONError(w, http.StatusUnauthorized, "missing bearer token")
+		return
+	}
+	if !isAllowedEmbeddedKeysPath(r.URL.Path, authorization) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	target, err := resolveUpstreamURL(s.cfg.Sub2APIBaseURL, r.URL.RequestURI())
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", authorization)
+	if accept := strings.TrimSpace(r.Header.Get("Accept")); accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			writeJSONError(w, http.StatusGatewayTimeout, "upstream request timed out")
+			return
+		}
+		writeJSONError(w, http.StatusBadGateway, "upstream request failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEmbeddedKeysResponseBytes+1))
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "upstream response read failed")
+		return
+	}
+	if int64(len(body)) > maxEmbeddedKeysResponseBytes {
+		writeJSONError(w, http.StatusBadGateway, "upstream response too large")
+		return
+	}
+
+	copyResponseHeaders(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
 }
 
 func (s *taskStore) worker() {
@@ -451,6 +515,68 @@ func shouldForwardRequestHeader(key string) bool {
 	}
 }
 
+func isAllowedEmbeddedKeysPath(requestPath string, authorization string) bool {
+	requestPath = path.Clean("/" + strings.TrimLeft(requestPath, "/"))
+	if requestPath == "/api/v1/keys" {
+		return true
+	}
+
+	const prefix = "/api/v1/admin/users/"
+	const suffix = "/api-keys"
+	if !strings.HasPrefix(requestPath, prefix) || !strings.HasSuffix(requestPath, suffix) {
+		return false
+	}
+	userID := strings.TrimSuffix(strings.TrimPrefix(requestPath, prefix), suffix)
+	if userID == "" || strings.Contains(userID, "/") {
+		return false
+	}
+	for _, char := range userID {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	tokenUserID, ok := bearerTokenUserID(authorization)
+	return ok && tokenUserID == userID
+}
+
+func bearerTokenUserID(authorization string) (string, bool) {
+	fields := strings.Fields(authorization)
+	if len(fields) != 2 || strings.ToLower(fields[0]) != "bearer" {
+		return "", false
+	}
+	token := fields[1]
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return "", false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", false
+	}
+	var claims struct {
+		UserID json.RawMessage `json:"user_id"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || len(claims.UserID) == 0 {
+		return "", false
+	}
+	var numeric json.Number
+	if err := json.Unmarshal(claims.UserID, &numeric); err == nil {
+		if id := numeric.String(); id != "" {
+			return id, true
+		}
+	}
+	var text string
+	if err := json.Unmarshal(claims.UserID, &text); err != nil || text == "" {
+		return "", false
+	}
+	for _, char := range text {
+		if char < '0' || char > '9' {
+			return "", false
+		}
+	}
+	return text, true
+}
+
 func flattenHeaders(headers http.Header) map[string]string {
 	out := make(map[string]string, len(headers))
 	for key, values := range headers {
@@ -459,6 +585,16 @@ func flattenHeaders(headers http.Header) map[string]string {
 		}
 	}
 	return out
+}
+
+func copyResponseHeaders(dst http.Header, src http.Header) {
+	for key, values := range src {
+		if shouldForwardResponseHeader(key) {
+			for _, value := range values {
+				dst.Add(key, value)
+			}
+		}
+	}
 }
 
 func shouldForwardResponseHeader(key string) bool {
