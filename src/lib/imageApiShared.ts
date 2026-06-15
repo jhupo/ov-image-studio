@@ -16,6 +16,9 @@ export interface CallApiOptions {
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
   maskDataUrl?: string
+  onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
+  onCustomTaskEnqueued?: (task: { taskId: string }) => void
+  onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void
 }
 
 export interface CallApiResult {
@@ -27,6 +30,10 @@ export interface CallApiResult {
   actualParamsList?: Array<Partial<TaskParams> | undefined>
   /** 每张图片对应的 API 改写提示词 */
   revisedPrompts?: Array<string | undefined>
+  /** API 返回的原始图片 HTTP URL（非 base64 时记录） */
+  rawImageUrls?: string[]
+  /** 并发多图请求中失败的单张请求 */
+  failedRequests?: Array<{ requestIndex: number; error: string }>
 }
 
 export function isHttpUrl(value: unknown): value is string {
@@ -88,13 +95,67 @@ async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> 
   return `data:${blob.type || fallbackMime};base64,${btoa(binary)}`
 }
 
+export const IMAGE_FETCH_CORS_HINT = ' 可点链接按钮复制结果链接，或尝试开启「返回 Base64 图片数据」避免此问题。'
+export const STREAMING_UNSUPPORTED_HINT = '提示：当前使用的 API 可能不支持流式传输，请尝试关闭「流式传输」功能。'
+export const STREAMING_FORMAT_HINT = '提示：API 返回了无法解析的流式数据格式，请尝试关闭「流式传输」功能。'
+
+export function appendStreamingUnsupportedHint(message: string): string {
+  return message ? `${message}\n${STREAMING_UNSUPPORTED_HINT}` : STREAMING_UNSUPPORTED_HINT
+}
+
+export function appendStreamingFormatHint(message: string): string {
+  return message ? `${message}\n${STREAMING_FORMAT_HINT}` : STREAMING_FORMAT_HINT
+}
+
+/** 排除明确与流式无关的状态码后追加提示 */
+export function maybeAppendStreamingHint(message: string, status: number, streamImages?: boolean): string {
+  if (!streamImages) return message
+  if (status === 401 || status === 403 || status === 404 || status === 408 || status === 429 || status >= 500) {
+    return message
+  }
+  return appendStreamingUnsupportedHint(message)
+}
+
+async function probeNoCorsReachability(url: string, timeoutMs = 8000): Promise<'opaque' | 'reachable' | 'failed'> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    return response.type === 'opaque' ? 'opaque' : 'reachable'
+  } catch {
+    return 'failed'
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, signal?: AbortSignal): Promise<string> {
   if (isDataUrl(url)) return url
 
-  const response = await fetch(url, {
-    cache: 'no-store',
-    signal,
-  })
+  let response: Response
+  try {
+    response = await fetch(url, {
+      cache: 'no-store',
+      signal,
+    })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      const probe = await probeNoCorsReachability(url)
+      if (probe === 'opaque') {
+        throw new Error(`图片已生成，但因服务商未允许跨域，图片链接下载失败。${IMAGE_FETCH_CORS_HINT}`)
+      }
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error(`图片链接下载失败（网络不可用）。${IMAGE_FETCH_CORS_HINT}`)
+      }
+      throw new Error(`图片链接下载失败（可能因跨域限制、链接过期或网络异常）。${IMAGE_FETCH_CORS_HINT}`)
+    }
+    throw err
+  }
 
   if (!response.ok) {
     throw new Error(`图片 URL 下载失败：HTTP ${response.status}`)
@@ -106,6 +167,7 @@ export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, 
 
 export async function getApiErrorMessage(response: Response): Promise<string> {
   let errorMsg = `HTTP ${response.status}`
+  const textResponse = response.clone()
   try {
     const errJson = await response.json()
     if (errJson.error?.message) errorMsg = errJson.error.message
@@ -115,7 +177,7 @@ export async function getApiErrorMessage(response: Response): Promise<string> {
     else if (errJson.message) errorMsg = errJson.message
   } catch {
     try {
-      errorMsg = await response.text()
+      errorMsg = await textResponse.text()
     } catch {
       /* ignore */
     }

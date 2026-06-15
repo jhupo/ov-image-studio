@@ -12,8 +12,8 @@ interface PromptTemplatesModalProps {
 const ALL_CATEGORY = 'All'
 const FAVORITES_CATEGORY = 'Favorites'
 const RECENT_CATEGORY = 'Recent'
-const FAVORITES_STORAGE_KEY = 'chaincloud.promptTemplateFavorites'
-const RECENT_STORAGE_KEY = 'chaincloud.promptTemplateRecent'
+const FAVORITES_STORAGE_KEY = 'ov-image-studio.promptTemplateFavorites'
+const RECENT_STORAGE_KEY = 'ov-image-studio.promptTemplateRecent'
 const MAX_RECENT_TEMPLATES = 12
 
 function readStoredIds(key: string) {

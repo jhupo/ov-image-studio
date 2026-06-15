@@ -1,8 +1,6 @@
 node_modules/
 dist/
+.env
 dev-proxy.config.json
-deploy/.env
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.codex-runtime/
+.mindfs/
+.wrangler/

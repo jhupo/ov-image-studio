@@ -1,38 +1,8 @@
-<svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="8" y1="6" x2="70" y2="76" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#071521"/>
-      <stop offset="1" stop-color="#0F2B3A"/>
-    </linearGradient>
-    <linearGradient id="glow" x1="18" y1="18" x2="62" y2="62" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#57E3FF"/>
-      <stop offset="0.55" stop-color="#6FA8FF"/>
-      <stop offset="1" stop-color="#C7F36B"/>
-    </linearGradient>
-    <filter id="soft" x="0" y="0" width="80" height="80" filterUnits="userSpaceOnUse">
-      <feGaussianBlur stdDeviation="4"/>
-    </filter>
-  </defs>
-
-  <rect x="6" y="6" width="68" height="68" rx="20" fill="url(#bg)"/>
-  <rect x="6.75" y="6.75" width="66.5" height="66.5" rx="19.25" stroke="rgba(135,224,255,0.18)"/>
-
-  <g filter="url(#soft)" opacity="0.38">
-    <circle cx="24" cy="24" r="7" fill="#57E3FF"/>
-    <circle cx="57" cy="51" r="8" fill="#6FA8FF"/>
-    <circle cx="48" cy="27" r="6" fill="#C7F36B"/>
-  </g>
-
-  <path d="M24 24L48 27L57 51L31 57L24 24Z" stroke="url(#glow)" stroke-width="3.5" stroke-linejoin="round"/>
-  <path d="M24 24L31 57" stroke="url(#glow)" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
-  <path d="M48 27L31 57" stroke="url(#glow)" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
-  <path d="M24 24L57 51" stroke="url(#glow)" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
-
-  <circle cx="24" cy="24" r="4.5" fill="#091A25" stroke="#57E3FF" stroke-width="2.2"/>
-  <circle cx="48" cy="27" r="4.5" fill="#091A25" stroke="#C7F36B" stroke-width="2.2"/>
-  <circle cx="57" cy="51" r="4.5" fill="#091A25" stroke="#6FA8FF" stroke-width="2.2"/>
-  <circle cx="31" cy="57" r="4.5" fill="#091A25" stroke="#8DEBFF" stroke-width="2.2"/>
-
-  <path d="M18 63.5H42" stroke="#9ADFFF" stroke-width="2.2" stroke-linecap="round" opacity="0.82"/>
-  <path d="M18 63.5H30" stroke="#D6FF73" stroke-width="2.2" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>OV Image Studio</title>
+  <rect width="512" height="512" rx="112" fill="#0f172a" />
+  <path d="M112 120h288c22.1 0 40 17.9 40 40v192c0 22.1-17.9 40-40 40H112c-22.1 0-40-17.9-40-40V160c0-22.1 17.9-40 40-40Z" fill="#f8fafc" />
+  <path d="M112 376h288c13.3 0 24-10.7 24-24v-38.6l-70.9-70.9c-9.4-9.4-24.6-9.4-33.9 0L269.7 292l-24.9-24.9c-9.4-9.4-24.6-9.4-33.9 0L96 381.9c4.4 3.8 10 6.1 16 6.1Z" fill="#14b8a6" />
+  <circle cx="364" cy="184" r="32" fill="#38bdf8" />
+  <text x="256" y="244" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="112" font-weight="800" fill="#0f172a" letter-spacing="0">OV</text>
 </svg>

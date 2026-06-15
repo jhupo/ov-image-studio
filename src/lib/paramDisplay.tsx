@@ -64,10 +64,10 @@ export function ActualValueBadge({ value, className = '', variant = 'highlight' 
 }
 
 export function getParamDisplay(task: TaskRecord, paramKey: ParamKey, actualParams = task.actualParams) {
-  const requestedValue = task.params[paramKey]
-  const actualValue = paramKey === 'n' && task.outputImages?.length > 0
-    ? task.outputImages.length
-    : actualParams?.[paramKey]
+  const requestedValue = task.sourceMode === 'agent' && paramKey === 'n'
+    ? 'auto'
+    : task.params[paramKey]
+  const actualValue = actualParams?.[paramKey]
   const hasActualValue = actualValue !== undefined && actualValue !== null
   const displayValue = hasActualValue ? actualValue : requestedValue
   const isMismatch =
@@ -81,20 +81,6 @@ export function getParamDisplay(task: TaskRecord, paramKey: ParamKey, actualPara
     requestedValue: String(requestedValue),
     isAutoResolved: hasActualValue && requestedValue === 'auto' && String(actualValue) !== String(requestedValue),
   }
-}
-
-export function ParamValue({ task, paramKey, className = '', actualParams }: ParamValueProps) {
-  const { displayValue, isMismatch } = getParamDisplay(task, paramKey, actualParams)
-
-  if (isMismatch) {
-    return <ActualValueBadge value={displayValue} className={className} />
-  }
-
-  return (
-    <span className={`${className} bg-gray-100 text-gray-500 dark:bg-white/[0.04] dark:text-gray-400`}>
-      {displayValue}
-    </span>
-  )
 }
 
 export function DetailParamValue({ task, paramKey, className = '', actualParams }: ParamValueProps) {

@@ -1,12 +1,15 @@
 import { useEffect } from 'react'
-import { ensureLocalBackendTaskPoll, initStore } from './store'
+import { initStore } from './store'
 import { useStore } from './store'
-import { normalizeSettings } from './lib/apiProfiles'
-import type { AppSettings } from './types'
+import { activateFirstImportedProfile, buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
+import { isDefaultConfigOnlyEnabled, mergeImportedSettings } from './lib/apiProfiles'
+import { getCustomProviderConfigUrl, loadCustomProviderSettingsFromUrl } from './lib/customProviderConfigUrl'
 import { detectEmbeddedSub2ApiContext, fetchEmbeddedSub2ApiKeys, getEmbeddedSub2ApiToken } from './lib/sub2apiEmbedded'
+import type { AppSettings } from './types'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
+import AgentWorkspace from './components/AgentWorkspace'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
 import Lightbox from './components/Lightbox'
@@ -15,59 +18,83 @@ import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
+import SupportPromptModal from './components/SupportPromptModal'
+import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
+import { useGlobalClickSuppression } from './lib/clickSuppression'
+
+let customProviderConfigUrlImportStarted = false
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   const setEmbeddedSub2Api = useStore((s) => s.setEmbeddedSub2Api)
   const showToast = useStore((s) => s.showToast)
-  const tasks = useStore((s) => s.tasks)
+  const appMode = useStore((s) => s.appMode)
+  const filterFavorite = useStore((s) => s.filterFavorite)
+  const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
+  useGlobalClickSuppression()
 
   useEffect(() => {
-    let cancelled = false
+    const searchParams = new URLSearchParams(window.location.search)
+    const customProviderConfigUrl = getCustomProviderConfigUrl()
+    const defaultConfigOnly = isDefaultConfigOnlyEnabled()
 
-    void (async () => {
-      await initStore()
-      if (cancelled) return
-
-      const searchParams = new URLSearchParams(window.location.search)
-      const nextSettings: Partial<AppSettings> = {}
-
-      const apiKeyParam = searchParams.get('apiKey')
-      if (apiKeyParam !== null) {
-        nextSettings.apiKey = apiKeyParam.trim()
-      }
-
-      const codexCliParam = searchParams.get('codexCli')
-      if (codexCliParam !== null) {
-        nextSettings.codexCli = codexCliParam.trim().toLowerCase() === 'true'
-      }
-
-      const apiModeParam = searchParams.get('apiMode')
-      if (apiModeParam === 'images' || apiModeParam === 'responses') {
-        nextSettings.apiMode = apiModeParam
-      }
-
-      if (Object.keys(nextSettings).length > 0) setSettings(nextSettings)
-
-      if (searchParams.has('apiKey') || searchParams.has('codexCli') || searchParams.has('apiMode')) {
-        searchParams.delete('apiUrl')
-        searchParams.delete('imageApiUrl')
-        searchParams.delete('adminApiUrl')
-        searchParams.delete('apiKey')
-        searchParams.delete('adminApiKey')
-        searchParams.delete('codexCli')
-        searchParams.delete('apiMode')
-        searchParams.delete('provider')
-
-        const nextSearch = searchParams.toString()
-        const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
-        window.history.replaceState(null, '', nextUrl)
-      }
-    })()
-
-    return () => {
-      cancelled = true
+    const applyUrlSettings = (baseSettings: Partial<AppSettings>) => {
+      const nextSettings = buildSettingsFromUrlParams(baseSettings, searchParams)
+      return Object.keys(nextSettings).length ? nextSettings : baseSettings
     }
+
+    const clearAppliedUrlSettings = () => {
+      if (!hasUrlSettingParams(searchParams)) return
+
+      clearUrlSettingParams(searchParams)
+
+      const nextSearch = searchParams.toString()
+      const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
+      window.history.replaceState(null, '', nextUrl)
+    }
+
+    if (customProviderConfigUrl && defaultConfigOnly && !customProviderConfigUrlImportStarted) {
+      customProviderConfigUrlImportStarted = true
+      void loadCustomProviderSettingsFromUrl(customProviderConfigUrl)
+        .then((importedSettings) => {
+          const state = useStore.getState()
+          const baseSettings = importedSettings
+            ? activateFirstImportedProfile(mergeImportedSettings(state.settings, importedSettings), importedSettings)
+            : state.settings
+          state.setSettings(applyUrlSettings(baseSettings))
+          clearAppliedUrlSettings()
+        })
+        .catch((error) => {
+          console.warn('Failed to import custom provider config URL:', error)
+          const state = useStore.getState()
+          state.setSettings(applyUrlSettings(state.settings))
+          clearAppliedUrlSettings()
+        })
+
+      initStore()
+      return
+    }
+
+    const nextSettings = buildSettingsFromUrlParams(useStore.getState().settings, searchParams)
+
+    setSettings(nextSettings)
+
+    clearAppliedUrlSettings()
+
+    if (customProviderConfigUrl && !customProviderConfigUrlImportStarted) {
+      customProviderConfigUrlImportStarted = true
+      void loadCustomProviderSettingsFromUrl(customProviderConfigUrl)
+        .then((importedSettings) => {
+          if (!importedSettings) return
+          const state = useStore.getState()
+          state.setSettings(mergeImportedSettings(state.settings, importedSettings))
+        })
+        .catch((error) => {
+          console.warn('Failed to import custom provider config URL:', error)
+        })
+    }
+
+    initStore()
   }, [setSettings])
 
   useEffect(() => {
@@ -86,12 +113,6 @@ export default function App() {
 
     let cancelled = false
     const token = getEmbeddedSub2ApiToken()
-    const clearEmbeddedProfileKey = () => {
-      setSettings({
-        embeddedApiKeyId: null,
-        apiKey: '',
-      })
-    }
 
     setEmbeddedSub2Api({
       active: true,
@@ -101,7 +122,6 @@ export default function App() {
       error: null,
       apiKeys: [],
     })
-    clearEmbeddedProfileKey()
 
     void (async () => {
       try {
@@ -117,8 +137,7 @@ export default function App() {
           apiKeys,
         })
 
-        const refreshedSettings = normalizeSettings(useStore.getState().settings)
-        const selectedApiKeyId = refreshedSettings.embeddedApiKeyId
+        const selectedApiKeyId = useStore.getState().settings.embeddedApiKeyId
         const selectedApiKey = apiKeys.find((item) => item.id === selectedApiKeyId)
           ?? apiKeys.find((item) => item.status === 'active')
           ?? apiKeys[0]
@@ -126,13 +145,13 @@ export default function App() {
         if (!selectedApiKey) return
 
         setSettings({
+          baseUrl: context.origin,
           embeddedApiKeyId: selectedApiKey.id,
           apiKey: selectedApiKey.key,
         })
       } catch (error) {
         if (cancelled) return
         const message = error instanceof Error ? error.message : String(error)
-        clearEmbeddedProfileKey()
         setEmbeddedSub2Api({
           active: true,
           origin: context.origin,
@@ -161,34 +180,27 @@ export default function App() {
     return () => document.removeEventListener('dragstart', preventPageImageDrag)
   }, [])
 
-  useEffect(() => {
-    const ensureRunningPolls = () => {
-      for (const task of useStore.getState().tasks) {
-        if (task.status === 'running' && task.backendTaskId) {
-          ensureLocalBackendTaskPoll(task.id)
-        }
-      }
-    }
-
-    ensureRunningPolls()
-    const timer = window.setInterval(ensureRunningPolls, 3000)
-    return () => window.clearInterval(timer)
-  }, [tasks])
-
   return (
     <>
       <Header />
-      <main data-home-main data-drag-select-surface className="pb-48">
-        <div className="safe-area-x max-w-7xl mx-auto">
-          <SearchBar />
-          <TaskGrid />
-        </div>
-      </main>
+      {appMode === 'agent' ? (
+        <AgentWorkspace />
+      ) : (
+        <main data-home-main data-drag-select-surface className="pb-48">
+          <div className="safe-area-x max-w-7xl mx-auto">
+            <SearchBar />
+            {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
+          </div>
+        </main>
+      )}
       <InputBar />
       <DetailModal />
       <Lightbox />
       <SettingsModal />
       <ConfirmDialog />
+      <SupportPromptModal />
+      <FavoriteCollectionPickerModal />
+      <ManageCollectionsModal />
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />

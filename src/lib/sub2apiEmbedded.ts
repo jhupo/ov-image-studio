@@ -15,7 +15,7 @@ export function detectEmbeddedSub2ApiContext(): Pick<EmbeddedSub2ApiState, 'acti
 
   return {
     active: uiMode === EMBEDDED_UI_MODE && token !== '' && Number.isFinite(userId),
-    origin: '',
+    origin: typeof window === 'undefined' ? '' : window.location.origin,
     userId: Number.isFinite(userId) ? userId : null,
   }
 }
@@ -24,10 +24,8 @@ export function getEmbeddedSub2ApiToken(): string {
   return readQueryString('token')
 }
 
-export async function fetchEmbeddedSub2ApiKeys(token: string, userId: number): Promise<EmbeddedSub2ApiKey[]> {
-  if (!token.trim()) return []
-
-  const response = await fetch(`/api/embedded/keys?userId=${encodeURIComponent(String(userId))}`, {
+async function fetchKeysFromPath(path: string, token: string): Promise<Response> {
+  return fetch(path, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -35,32 +33,25 @@ export async function fetchEmbeddedSub2ApiKeys(token: string, userId: number): P
     },
     credentials: 'omit',
   })
+}
+
+export async function fetchEmbeddedSub2ApiKeys(token: string, userId: number): Promise<EmbeddedSub2ApiKey[]> {
+  if (!token.trim()) return []
+
+  const params = 'page=1&page_size=100'
+  let response = await fetchKeysFromPath(`/api/v1/keys?${params}`, token)
+  if (!response.ok) {
+    response = await fetchKeysFromPath(`/api/v1/admin/users/${encodeURIComponent(String(userId))}/api-keys?${params}`, token)
+  }
 
   if (!response.ok) {
-    throw new Error(`加载 Sub2API 密钥失败 (${response.status})`)
+    throw new Error(`Failed to load Sub2API keys (${response.status})`)
   }
 
   const payload = await response.json() as {
-    code?: number
-    message?: string
-    items?: Array<{
-      id?: number
-      name?: string
-      key?: string
-      status?: string
-    }>
-    data?: Array<{
-      id?: number
-      name?: string
-      key?: string
-      status?: string
-    }> | {
-      items?: Array<{
-        id?: number
-        name?: string
-        key?: string
-        status?: string
-      }>
+    items?: Array<{ id?: number; name?: string; key?: string; status?: string }>
+    data?: Array<{ id?: number; name?: string; key?: string; status?: string }> | {
+      items?: Array<{ id?: number; name?: string; key?: string; status?: string }>
     }
   }
 
@@ -70,7 +61,7 @@ export async function fetchEmbeddedSub2ApiKeys(token: string, userId: number): P
       ? payload.data
       : payload.data && typeof payload.data === 'object' && Array.isArray(payload.data.items)
         ? payload.data.items
-      : []
+        : []
 
   return rawItems
     .filter((item) => Number.isFinite(item.id) && typeof item.key === 'string' && item.key.trim() !== '')

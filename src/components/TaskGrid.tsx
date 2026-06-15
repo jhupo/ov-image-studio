@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask } from '../store'
+import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds, useStore, reuseConfig, editOutputs, removeTask, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import TaskCard from './TaskCard'
 
 export default function TaskGrid() {
@@ -7,6 +7,7 @@ export default function TaskGrid() {
   const searchQuery = useStore((s) => s.searchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
   const filterFavorite = useStore((s) => s.filterFavorite)
+  const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
@@ -14,16 +15,18 @@ export default function TaskGrid() {
   const clearSelection = useStore((s) => s.clearSelection)
   const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
-  const isDragging = useRef(false)
-  const dragStart = useRef<{ x: number; y: number } | null>(null)
+  const [selectionBox, setSelectionBox] = useState<{ startPageX: number; startPageY: number; currentPageX: number; currentPageY: number } | null>(null)
+  const dragStart = useRef<{ pageX: number; pageY: number } | null>(null)
+  const lastClientPoint = useRef<{ x: number; y: number } | null>(null)
   const hasDragged = useRef(false)
+  const isDragging = useRef(false)
+  const dragScrollIntervalRef = useRef<number | null>(null)
+  const dragScrollDirectionRef = useRef<-1 | 1 | null>(null)
+  const lastToastTimeRef = useRef(0)
   const suppressClickUntil = useRef(0)
   const startedOnCard = useRef(false)
   const startedWithCtrl = useRef(false)
   const initialSelection = useRef<string[]>([])
-  const previousStatuses = useRef<Map<string, string> | null>(null)
-  const [highlightedTaskIds, setHighlightedTaskIds] = useState<string[]>([])
   const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 
   const filteredTasks = useMemo(() => {
@@ -31,70 +34,57 @@ export default function TaskGrid() {
     const q = searchQuery.trim().toLowerCase()
     
     return sorted.filter((t) => {
-      if (filterFavorite && !t.isFavorite) return false
-      const matchStatus = filterStatus === 'all' || t.status === filterStatus
-      if (!matchStatus) return false
-      
-      if (!q) return true
-      const prompt = (t.prompt || '').toLowerCase()
-      const paramStr = JSON.stringify(t.params).toLowerCase()
-      return prompt.includes(q) || paramStr.includes(q)
+      if (filterFavorite) {
+        if (!t.isFavorite) return false
+        if (activeFavoriteCollectionId && activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(t).includes(activeFavoriteCollectionId)) return false
+      }
+      if (!taskMatchesFilterStatus(t, filterStatus)) return false
+      return taskMatchesSearchQuery(t, q)
     })
-  }, [tasks, searchQuery, filterStatus, filterFavorite])
-
-  useEffect(() => {
-    const prev = previousStatuses.current
-    const current = new Map(tasks.map((task) => [task.id, task.status]))
-    previousStatuses.current = current
-    if (!prev) return
-
-    const newlyDone = tasks.find((task) => task.status === 'done' && prev.get(task.id) === 'running')
-    if (!newlyDone) return
-
-    setHighlightedTaskIds((ids) => [...new Set([newlyDone.id, ...ids])])
-    window.setTimeout(() => {
-      setHighlightedTaskIds((ids) => ids.filter((id) => id !== newlyDone.id))
-    }, 2800)
-    window.requestAnimationFrame(() => {
-      const card = gridRef.current?.querySelector(`[data-task-id="${CSS.escape(newlyDone.id)}"]`)
-      card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    })
-  }, [tasks])
+  }, [tasks, searchQuery, filterStatus, filterFavorite, activeFavoriteCollectionId])
 
   const handleDelete = (task: typeof tasks[0]) => {
     setConfirmDialog({
-      title: '删除记录',
-      message: '确定要删除这条记录吗？关联的图片资源也会被清理（如果没有其他任务引用）。',
+      title: '删除任务',
+      message: '确定要删除这个任务吗？关联的图片资源也会被清理（如果没有其他任务引用）。',
       action: () => removeTask(task),
     })
   }
 
+  const getPagePoint = (clientX: number, clientY: number) => ({
+    pageX: clientX + window.scrollX,
+    pageY: clientY + window.scrollY,
+  })
+
   const beginSelection = (target: HTMLElement, clientX: number, clientY: number, isCtrl: boolean) => {
+    const point = getPagePoint(clientX, clientY)
+
     startedOnCard.current = Boolean(target.closest('.task-card-wrapper'))
     startedWithCtrl.current = isCtrl
     initialSelection.current = [...useStore.getState().selectedTaskIds]
 
     isDragging.current = true
     hasDragged.current = false
-    dragStart.current = { x: clientX, y: clientY }
+    dragStart.current = point
+    lastClientPoint.current = { x: clientX, y: clientY }
     document.body.classList.add('select-none')
     document.body.classList.add('drag-selecting')
     setSelectionBox({
-      startX: clientX,
-      startY: clientY,
-      currentX: clientX,
-      currentY: clientY,
+      startPageX: point.pageX,
+      startPageY: point.pageY,
+      currentPageX: point.pageX,
+      currentPageY: point.pageY,
     })
   }
 
-  const updateSelectionFromPoint = (clientX: number, clientY: number) => {
+  const updateSelectionFromPoint = (pageX: number, pageY: number) => {
     const start = dragStart.current
     if (!start || !gridRef.current) return
 
-    const minX = Math.min(start.x, clientX)
-    const maxX = Math.max(start.x, clientX)
-    const minY = Math.min(start.y, clientY)
-    const maxY = Math.max(start.y, clientY)
+    const minX = Math.min(start.pageX, pageX)
+    const maxX = Math.max(start.pageX, pageX)
+    const minY = Math.min(start.pageY, pageY)
+    const maxY = Math.max(start.pageY, pageY)
 
     const cards = gridRef.current.querySelectorAll('.task-card-wrapper')
     const newSelected = new Set(initialSelection.current)
@@ -105,8 +95,13 @@ export default function TaskGrid() {
       const taskId = card.getAttribute('data-task-id')
       if (!taskId) return
 
+      const cardLeft = rect.left + window.scrollX
+      const cardRight = rect.right + window.scrollX
+      const cardTop = rect.top + window.scrollY
+      const cardBottom = rect.bottom + window.scrollY
+
       const isIntersecting =
-        minX < rect.right && maxX > rect.left && minY < rect.bottom && maxY > rect.top
+        minX < cardRight && maxX > cardLeft && minY < cardBottom && maxY > cardTop
 
       if (isIntersecting) {
         if (initialSelected.has(taskId)) {
@@ -123,6 +118,41 @@ export default function TaskGrid() {
   }
 
   useEffect(() => {
+    const stopDragScroll = () => {
+      if (dragScrollIntervalRef.current) {
+        clearInterval(dragScrollIntervalRef.current)
+        dragScrollIntervalRef.current = null
+      }
+      dragScrollDirectionRef.current = null
+    }
+
+    const startDragScroll = (direction: -1 | 1) => {
+      if (dragScrollIntervalRef.current && dragScrollDirectionRef.current === direction) return
+      stopDragScroll()
+      dragScrollDirectionRef.current = direction
+      dragScrollIntervalRef.current = window.setInterval(() => {
+        window.scrollBy({ top: direction * 15, behavior: 'instant' })
+      }, 16)
+    }
+
+    const endSelection = (clearEmptySurfaceClick = false, suppressClick = false) => {
+      if (isDragging.current) {
+        document.body.classList.remove('select-none')
+        document.body.classList.remove('drag-selecting')
+      }
+      if (isDragging.current && clearEmptySurfaceClick && !hasDragged.current && !startedOnCard.current && !startedWithCtrl.current) {
+        clearSelection()
+      }
+      if (isDragging.current && suppressClick && hasDragged.current) {
+        suppressClickUntil.current = Date.now() + 250
+      }
+      stopDragScroll()
+      isDragging.current = false
+      dragStart.current = null
+      lastClientPoint.current = null
+      setSelectionBox(null)
+    }
+
     const getEventElement = (e: MouseEvent) => {
       if (e.target instanceof Element) return e.target
       return document.elementFromPoint(e.clientX, e.clientY)
@@ -146,43 +176,79 @@ export default function TaskGrid() {
       if (!isDragging.current || !dragStart.current) return
 
       const start = dragStart.current
-      const distance = Math.hypot(e.clientX - start.x, e.clientY - start.y)
+      const point = getPagePoint(e.clientX, e.clientY)
+      lastClientPoint.current = { x: e.clientX, y: e.clientY }
+      const distance = Math.hypot(point.pageX - start.pageX, point.pageY - start.pageY)
       if (distance < 6 && !hasDragged.current) return
 
       hasDragged.current = true
       setSelectionBox({
-        startX: start.x,
-        startY: start.y,
-        currentX: e.clientX,
-        currentY: e.clientY,
+        startPageX: start.pageX,
+        startPageY: start.pageY,
+        currentPageX: point.pageX,
+        currentPageY: point.pageY,
       })
-      updateSelectionFromPoint(e.clientX, e.clientY)
+      updateSelectionFromPoint(point.pageX, point.pageY)
       e.preventDefault()
+
+      const scrollThreshold = 40
+      if (e.clientY < scrollThreshold) {
+        startDragScroll(-1)
+      } else if (e.clientY > window.innerHeight - scrollThreshold) {
+        startDragScroll(1)
+      } else {
+        stopDragScroll()
+      }
+    }
+
+    const handleDocumentScroll = () => {
+      if (!isDragging.current || !dragStart.current || !lastClientPoint.current || !hasDragged.current) return
+
+      const point = getPagePoint(lastClientPoint.current.x, lastClientPoint.current.y)
+      const start = dragStart.current
+      setSelectionBox({
+        startPageX: start.pageX,
+        startPageY: start.pageY,
+        currentPageX: point.pageX,
+        currentPageY: point.pageY,
+      })
+      updateSelectionFromPoint(point.pageX, point.pageY)
+    }
+
+    const handleDocumentWheel = (e: WheelEvent) => {
+      if (!isDragging.current) return
+      if ((e.buttons & 1) === 0) {
+        endSelection()
+        return
+      }
+      if (!hasDragged.current) return
+      if (!e.ctrlKey && !e.metaKey) return
+
+      e.preventDefault()
+      const now = Date.now()
+      if (now - lastToastTimeRef.current > 3000) {
+        lastToastTimeRef.current = now
+        const keyName = isMac ? '⌘' : 'Ctrl'
+        useStore.getState().showToast(`松开 ${keyName} 键使用滚轮，或拖至边缘自动滚动`, 'info')
+      }
     }
 
     const handleDocumentMouseUp = () => {
-      if (isDragging.current) {
-        document.body.classList.remove('select-none')
-        document.body.classList.remove('drag-selecting')
-      }
-      if (isDragging.current && !hasDragged.current && !startedOnCard.current && !startedWithCtrl.current) {
-        clearSelection()
-      }
-      if (isDragging.current && hasDragged.current) {
-        suppressClickUntil.current = Date.now() + 250
-      }
-      isDragging.current = false
-      dragStart.current = null
-      setSelectionBox(null)
+      endSelection(true, true)
     }
 
     document.addEventListener('mousedown', handleDocumentMouseDown, true)
     document.addEventListener('mousemove', handleDocumentMouseMove, true)
     document.addEventListener('mouseup', handleDocumentMouseUp, true)
+    document.addEventListener('wheel', handleDocumentWheel, { capture: true, passive: false })
+    window.addEventListener('scroll', handleDocumentScroll, true)
     return () => {
+      stopDragScroll()
       document.removeEventListener('mousedown', handleDocumentMouseDown, true)
       document.removeEventListener('mousemove', handleDocumentMouseMove, true)
       document.removeEventListener('mouseup', handleDocumentMouseUp, true)
+      document.removeEventListener('wheel', handleDocumentWheel, true)
+      window.removeEventListener('scroll', handleDocumentScroll, true)
     }
   }, [clearSelection, isMac])
 
@@ -190,7 +256,7 @@ export default function TaskGrid() {
     return (
       <div className="text-center py-20 text-gray-400 dark:text-gray-500">
         {searchQuery || filterFavorite ? (
-          <p className="text-sm">没有找到匹配的记录</p>
+          <p className="text-sm">没有找到匹配的任务</p>
         ) : (
           <>
             <svg
@@ -221,11 +287,7 @@ export default function TaskGrid() {
     >
       <div ref={gridRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-10">
         {filteredTasks.map((task) => (
-          <div
-            key={task.id}
-            className={`task-card-wrapper rounded-xl ${highlightedTaskIds.includes(task.id) ? 'task-card-new-result' : ''}`}
-            data-task-id={task.id}
-          >
+          <div key={task.id} className="task-card-wrapper" data-task-id={task.id}>
             <TaskCard
               task={task}
               onClick={(e) => {
@@ -237,12 +299,10 @@ export default function TaskGrid() {
                 const isCtrl = isMac ? e.metaKey : e.ctrlKey
                 if (isCtrl) {
                   useStore.getState().toggleTaskSelection(task.id)
-                } else if (selectedTaskIds.length > 0) {
-                  clearSelection()
-                  setDetailTaskId(task.id)
-                } else {
-                  setDetailTaskId(task.id)
+                  return
                 }
+
+                setDetailTaskId(task.id)
               }}
               onReuse={() => reuseConfig(task)}
               onEditOutputs={() => editOutputs(task)}
@@ -256,10 +316,10 @@ export default function TaskGrid() {
         <div
           className="fixed bg-blue-500/20 border border-blue-500/50 pointer-events-none z-[30]"
           style={{
-            left: Math.min(selectionBox.startX, selectionBox.currentX),
-            top: Math.min(selectionBox.startY, selectionBox.currentY),
-            width: Math.abs(selectionBox.currentX - selectionBox.startX),
-            height: Math.abs(selectionBox.currentY - selectionBox.startY),
+            left: Math.min(selectionBox.startPageX, selectionBox.currentPageX) - window.scrollX,
+            top: Math.min(selectionBox.startPageY, selectionBox.currentPageY) - window.scrollY,
+            width: Math.abs(selectionBox.currentPageX - selectionBox.startPageX),
+            height: Math.abs(selectionBox.currentPageY - selectionBox.startPageY),
           }}
         />
       )}

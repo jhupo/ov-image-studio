@@ -1,9 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { useStore, addImageFromUrl } from '../store'
-import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { useStore, addImageFromUrl, ensureImageCached } from '../store'
+import { copyImageSourceToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getImageZipEntries } from '../lib/downloadImages'
+import { suppressGlobalClicks } from '../lib/clickSuppression'
+import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 
 export default function ImageContextMenu() {
-  const [menuInfo, setMenuInfo] = useState<{ src: string; x: number; y: number } | null>(null)
+  const [menuInfo, setMenuInfo] = useState<{ src: string; imageId?: string; outputImageIds: string[]; x: number; y: number } | null>(null)
   const showToast = useStore((s) => s.showToast)
   const inputImages = useStore((s) => s.inputImages)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
@@ -29,6 +32,8 @@ export default function ImageContextMenu() {
         e.preventDefault()
         setMenuInfo({
           src: imgTarget.src,
+          imageId: imgTarget.dataset.imageId,
+          outputImageIds: imgTarget.dataset.outputImageIds?.split(',').filter(Boolean) ?? [],
           x: e.clientX,
           y: e.clientY,
         })
@@ -52,6 +57,7 @@ export default function ImageContextMenu() {
       if (e.target instanceof Element && e.target.closest('[data-lightbox-root]')) {
         window.dispatchEvent(new Event('image-context-menu-dismiss-lightbox-click'))
       }
+      if (e.type === 'mousedown' || e.type === 'touchstart') suppressGlobalClicks()
       setMenuInfo(null)
     }
     window.addEventListener('mousedown', close, { capture: true })
@@ -70,13 +76,16 @@ export default function ImageContextMenu() {
 
   if (!menuInfo) return null
 
+  const getOriginalImageSrc = async () => {
+    if (!menuInfo.imageId) return menuInfo.src
+    return await ensureImageCached(menuInfo.imageId) ?? menuInfo.src
+  }
+
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation()
     setMenuInfo(null)
     try {
-      const res = await fetch(menuInfo.src)
-      const blob = await res.blob()
-      await copyBlobToClipboard(blob)
+      await copyImageSourceToClipboard(getOriginalImageSrc())
       showToast('图片已复制', 'success')
     } catch (err) {
       console.error(err)
@@ -86,20 +95,68 @@ export default function ImageContextMenu() {
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation()
+    const imageId = menuInfo.imageId
+    const src = menuInfo.src
     setMenuInfo(null)
+
     try {
-      const res = await fetch(menuInfo.src)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      const ext = blob.type.split('/')[1] || 'png'
-      a.download = `image-${Date.now()}.${ext}`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      showToast('开始下载', 'success')
+      let fileNameBase = ''
+      if (imageId) {
+        const tasks = useStore.getState().tasks
+        const matchedTask = tasks.find(t => t.outputImages?.includes(imageId))
+        if (matchedTask) {
+          fileNameBase = `task-${matchedTask.id}`
+        } else {
+          fileNameBase = `image-${imageId}`
+        }
+      } else {
+        const timeStr = formatExportFileTime(new Date())
+        fileNameBase = `image-${timeStr}`
+      }
+
+      const result = await downloadImageIds([imageId || src], fileNameBase)
+      if (result.successCount === 0) {
+        showToast('下载失败', 'error')
+      } else {
+        showToast('下载成功', 'success')
+      }
+    } catch (err) {
+      console.error(err)
+      showToast('下载失败', 'error')
+    }
+  }
+
+  const handleDownloadAll = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const outputImageIds = menuInfo.outputImageIds
+    setMenuInfo(null)
+    if (outputImageIds.length <= 1) return
+
+    try {
+      let fileNameBase = ''
+      if (outputImageIds[0]) {
+        const tasks = useStore.getState().tasks
+        const matchedTask = tasks.find(t => t.outputImages?.includes(outputImageIds[0]))
+        if (matchedTask) {
+          fileNameBase = `task-${matchedTask.id}`
+        }
+      }
+      if (!fileNameBase) {
+        const timeStr = formatExportFileTime(new Date())
+        fileNameBase = `batch-${timeStr}`
+      }
+
+      const settings = useStore.getState().settings
+      const result = settings.zipDownloadRoutes.includes('image-context-menu-all')
+        ? await downloadImageEntriesAsZip(getImageZipEntries(outputImageIds, fileNameBase), fileNameBase)
+        : await downloadImageIds(outputImageIds, fileNameBase)
+      if (result.successCount === 0) {
+        showToast('下载失败', 'error')
+      } else if (result.failCount > 0) {
+        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
+      } else {
+        showToast(result.successCount > 1 ? `下载成功：${result.successCount} 张图片` : '下载成功', 'success')
+      }
     } catch (err) {
       console.error(err)
       showToast('下载失败', 'error')
@@ -115,7 +172,8 @@ export default function ImageContextMenu() {
     }
 
     try {
-      await addImageFromUrl(menuInfo.src)
+      const src = await getOriginalImageSrc()
+      await addImageFromUrl(src)
       setDetailTaskId(null)
       setLightboxImageId(null)
       setMaskEditorImageId(null)
@@ -130,7 +188,8 @@ export default function ImageContextMenu() {
   let left = menuInfo.x
   let top = menuInfo.y
   const MENU_WIDTH = 120
-  const MENU_HEIGHT = 128 // 三个按钮高度加 padding
+  const showDownloadAll = menuInfo.outputImageIds.length > 1
+  const MENU_HEIGHT = showDownloadAll ? 160 : 128
 
   if (left + MENU_WIDTH > window.innerWidth) {
     left -= MENU_WIDTH
@@ -150,27 +209,30 @@ export default function ImageContextMenu() {
         onClick={handleCopy}
         className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
       >
-        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-        </svg>
+        <CopyIcon className="w-4 h-4 flex-shrink-0" />
         复制
       </button>
       <button
         onClick={handleDownload}
         className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
       >
-        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-        </svg>
+        <DownloadIcon className="w-4 h-4 flex-shrink-0" />
         下载
       </button>
+      {showDownloadAll && (
+        <button
+          onClick={handleDownloadAll}
+          className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
+        >
+          <DownloadIcon className="w-4 h-4 flex-shrink-0" />
+          下载全部
+        </button>
+      )}
       <button
         onClick={handleEdit}
         className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
       >
-        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-        </svg>
+        <EditIcon className="w-4 h-4 flex-shrink-0" />
         编辑
       </button>
     </div>
