@@ -1,4 +1,8 @@
 # ---- Build stage ----
+ARG BUILDPLATFORM=linux/amd64
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
 FROM --platform=$BUILDPLATFORM node:20-alpine AS build
 
 WORKDIR /app
