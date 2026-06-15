@@ -157,22 +157,22 @@ export default function Header() {
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
                   <a
-                    href="https://github.com/jhupo/ov-image-studio"
+                    href="https://dash.ovload.com"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline"
                   >
-                    OV Image Studio
+                    链路云
                   </a>
                 </>
               ) : (
                 <a
-                  href="https://github.com/jhupo/ov-image-studio"
+                  href="https://dash.ovload.com"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[17px] sm:text-lg font-bold tracking-tight text-gray-800 dark:text-gray-100 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 >
-                  OV Image Studio
+                  链路云
                 </a>
               )}
               {hasUpdate && latestRelease && (

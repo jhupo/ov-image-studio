@@ -65,7 +65,7 @@ export default function SupportPromptModal() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
           <a
-            href="https://github.com/jhupo/ov-image-studio"
+            href="https://dash.ovload.com"
             target="_blank"
             rel="noopener noreferrer"
             onClick={dismissSupportPrompt}

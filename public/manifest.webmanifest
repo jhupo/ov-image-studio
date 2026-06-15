@@ -1,7 +1,7 @@
 {
-  "name": "OV Image Studio",
-  "short_name": "OV Image",
-  "description": "OV Image Studio 图像生成工作台",
+  "name": "链路云",
+  "short_name": "链路云",
+  "description": "链路云图像生成工作台",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -1,4 +1,4 @@
-# OV Image Studio
+# 链路云
 
 基于 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 修改的图片生成前端，保留原项目 MIT 许可与署名。
 
@@ -72,7 +72,7 @@ image.ovload.com {
 }
 ```
 
-这里 `127.0.0.1:8080` 是 sub2api，`127.0.0.1:8081` 是 OV Image Studio 容器映射出来的端口。Go 服务会把前端提交的 `/images/generations`、`/images/edits`、`/responses` 等长耗时请求转发到 `SUB2API_BASE_URL`，所以这些路径不需要暴露给浏览器，也不需要在 Caddy 单独转给 sub2api。
+这里 `127.0.0.1:8080` 是 sub2api，`127.0.0.1:8081` 是链路云容器映射出来的端口。Go 服务会把前端提交的 `/images/generations`、`/images/edits`、`/responses` 等长耗时请求转发到 `SUB2API_BASE_URL`，所以这些路径不需要暴露给浏览器，也不需要在 Caddy 单独转给 sub2api。
 
 ## Release 更新
 
