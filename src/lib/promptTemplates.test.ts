@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchPromptTemplates, formatTemplatePrompt } from './promptTemplates'
+import { formatTemplatePrompt } from './promptTemplates'
 
 describe('formatTemplatePrompt', () => {
   it('keeps JSON prompt structure and replaces argument placeholders with defaults', () => {
@@ -20,14 +20,5 @@ describe('formatTemplatePrompt', () => {
     const prompt = formatTemplatePrompt('A portrait in a {argument name="style" default="cinematic film"} style with soft light.')
 
     expect(prompt).toBe('A portrait in a cinematic film style with soft light.')
-  })
-
-  it('loads the public awesome-gpt-image-2 README templates with formatted prompts', async () => {
-    const templates = await fetchPromptTemplates()
-
-    expect(templates.length).toBeGreaterThanOrEqual(120)
-    expect(templates.some((template) => template.title === 'VR 头显爆炸视图海报')).toBe(true)
-    expect(templates.some((template) => template.category === '精选')).toBe(true)
-    expect(templates.every((template) => !template.prompt.includes('{argument'))).toBe(true)
   })
 })

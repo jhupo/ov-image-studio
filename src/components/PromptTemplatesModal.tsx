@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import { fetchPromptTemplates, formatTemplatePrompt, getPromptCategoryLabel, type PromptTemplate } from '../lib/promptTemplates'
+import { fetchPromptTemplates, formatTemplatePrompt, getPromptCategoryLabel, promptTemplateImageURL, type PromptTemplate } from '../lib/promptTemplates'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { useStore } from '../store'
 
@@ -15,6 +15,7 @@ const RECENT_CATEGORY = 'Recent'
 const FAVORITES_STORAGE_KEY = 'ov-image-studio.promptTemplateFavorites'
 const RECENT_STORAGE_KEY = 'ov-image-studio.promptTemplateRecent'
 const MAX_RECENT_TEMPLATES = 12
+const PAGE_SIZE = 24
 
 function readStoredIds(key: string) {
   try {
@@ -29,9 +30,14 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
   const setPrompt = useStore((s) => s.setPrompt)
   const showToast = useStore((s) => s.showToast)
   const [templates, setTemplates] = useState<PromptTemplate[]>([])
+  const [categories, setCategories] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [activeCategory, setActiveCategory] = useState(ALL_CATEGORY)
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [preview, setPreview] = useState<PromptTemplate | null>(null)
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => readStoredIds(FAVORITES_STORAGE_KEY))
   const [recentIds, setRecentIds] = useState<string[]>(() => readStoredIds(RECENT_STORAGE_KEY))
@@ -45,43 +51,71 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
   })
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedQuery(searchQuery.trim())
+      setPage(1)
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [searchQuery])
+
+  const idsFilter = useMemo(() => {
+    if (activeCategory === FAVORITES_CATEGORY) return favoriteIds
+    if (activeCategory === RECENT_CATEGORY) return recentIds
+    return []
+  }, [activeCategory, favoriteIds, recentIds])
+
+  useEffect(() => {
+    if ((activeCategory === FAVORITES_CATEGORY || activeCategory === RECENT_CATEGORY) && idsFilter.length === 0) {
+      setTemplates([])
+      setTotal(0)
+      setLoading(false)
+      setError('')
+      return
+    }
+
     let cancelled = false
     void (async () => {
       setLoading(true)
-      const nextTemplates = await fetchPromptTemplates()
-      if (cancelled) return
-      setTemplates(nextTemplates)
-      setLoading(false)
+      setError('')
+      try {
+        const result = await fetchPromptTemplates({
+          page,
+          pageSize: PAGE_SIZE,
+          q: debouncedQuery,
+          category: activeCategory === ALL_CATEGORY || activeCategory === FAVORITES_CATEGORY || activeCategory === RECENT_CATEGORY ? '' : activeCategory,
+          ids: idsFilter,
+        })
+        if (cancelled) return
+        setTemplates(result.items)
+        setTotal(result.total)
+        setCategories(result.categories)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : '模板加载失败'
+        setTemplates([])
+        setTotal(0)
+        setError(message)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [activeCategory, debouncedQuery, idsFilter, page])
 
-  const categories = useMemo(() => {
-    const unique = Array.from(new Set(templates.map((item) => item.category).filter(Boolean)))
-    return [ALL_CATEGORY, FAVORITES_CATEGORY, RECENT_CATEGORY, ...unique]
-  }, [templates])
+  useEffect(() => {
+    setPage(1)
+  }, [activeCategory])
+
+  const categoryTabs = useMemo(() => [ALL_CATEGORY, FAVORITES_CATEGORY, RECENT_CATEGORY, ...categories], [categories])
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const visibleTemplates = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase()
-    return templates.filter((item) => {
-      if (activeCategory === FAVORITES_CATEGORY && !favoriteIds.includes(item.id)) return false
-      if (activeCategory === RECENT_CATEGORY && !recentIds.includes(item.id)) return false
-      if (![ALL_CATEGORY, FAVORITES_CATEGORY, RECENT_CATEGORY].includes(activeCategory) && item.category !== activeCategory) return false
-      if (!normalizedQuery) return true
-      return [item.title, item.summary, item.prompt, item.category, item.author, ...item.tags]
-        .join(' ')
-        .toLowerCase()
-        .includes(normalizedQuery)
-    })
-  }, [activeCategory, favoriteIds, recentIds, searchQuery, templates])
-
-  const orderedVisibleTemplates = useMemo(() => {
-    if (activeCategory !== RECENT_CATEGORY) return visibleTemplates
+    if (activeCategory !== RECENT_CATEGORY) return templates
     const order = new Map(recentIds.map((id, index) => [id, index]))
-    return [...visibleTemplates].sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999))
-  }, [activeCategory, recentIds, visibleTemplates])
+    return [...templates].sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999))
+  }, [activeCategory, recentIds, templates])
 
   const rememberTemplate = (template: PromptTemplate) => {
     setRecentIds((prev) => {
@@ -124,6 +158,18 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
     }
   }
 
+  const renderImage = (template: PromptTemplate, className: string) => {
+    const imageUrl = promptTemplateImageURL(template)
+    if (!imageUrl) {
+      return (
+        <div className="flex h-full w-full items-center justify-center bg-gray-100 px-8 text-center text-sm font-semibold text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+          {template.title || 'GPT Image 2'}
+        </div>
+      )
+    }
+    return <img src={imageUrl} alt={template.title} loading="lazy" className={className} />
+  }
+
   const modal = (
     <div data-no-drag-select className="fixed inset-0 z-[72] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/45 backdrop-blur-sm animate-overlay-in" onClick={onClose} />
@@ -162,7 +208,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
               )}
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
-              {categories.map((category) => (
+              {categoryTabs.map((category) => (
                 <button
                   key={category}
                   onClick={() => setActiveCategory(category)}
@@ -177,19 +223,15 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
           <div className="min-h-0 flex-1 overflow-y-auto pr-1 custom-scrollbar">
             {loading ? (
               <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">正在加载模板...</div>
-            ) : orderedVisibleTemplates.length ? (
+            ) : error ? (
+              <div className="flex h-full min-h-[360px] items-center justify-center px-6 text-center text-sm text-red-500">{error}</div>
+            ) : visibleTemplates.length ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {orderedVisibleTemplates.map((template) => (
+                {visibleTemplates.map((template) => (
                   <article key={template.id} className="group overflow-hidden rounded-lg border border-gray-200/70 bg-white/80 transition hover:border-blue-400/70 dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-blue-500/45">
                     <div className="relative aspect-[16/10] w-full overflow-hidden bg-gray-100 dark:bg-gray-900">
                       <button type="button" onClick={() => setPreview(template)} className="block h-full w-full text-left">
-                        {template.imageUrl ? (
-                          <img src={template.imageUrl} alt={template.title} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center bg-gray-100 text-sm font-semibold text-gray-500 dark:bg-gray-900">
-                            GPT Image 2
-                          </div>
-                        )}
+                        {renderImage(template, 'h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]')}
                       </button>
                       <button
                         type="button"
@@ -229,6 +271,30 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
               <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">没有匹配的模板</div>
             )}
           </div>
+
+          {!loading && !error && total > PAGE_SIZE && (
+            <div className="mt-4 flex shrink-0 items-center justify-between border-t border-gray-200/70 pt-4 text-sm text-gray-500 dark:border-white/[0.08] dark:text-gray-400">
+              <span>共 {total} 个模板，第 {page} / {pageCount} 页</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                  disabled={page <= 1}
+                  className="rounded border border-gray-200/70 px-3 py-1.5 font-medium transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:hover:bg-white/[0.06]"
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+                  disabled={page >= pageCount}
+                  className="rounded border border-gray-200/70 px-3 py-1.5 font-medium transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:hover:bg-white/[0.06]"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {preview && (
@@ -238,13 +304,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex min-h-[280px] items-center justify-center bg-gray-100 dark:bg-black lg:min-h-[620px]">
-                {preview.imageUrl ? (
-                  <img src={preview.imageUrl} alt={preview.title} className="max-h-[72vh] w-full object-contain" />
-                ) : (
-                  <div className="flex h-full min-h-[360px] w-full items-center justify-center bg-gray-100 px-8 text-center text-xl font-bold text-gray-500 dark:bg-gray-900 dark:text-gray-400">
-                    {preview.title}
-                  </div>
-                )}
+                {renderImage(preview, 'max-h-[72vh] w-full object-contain')}
               </div>
 
               <aside className="flex min-h-0 flex-col border-t border-gray-200/70 bg-white dark:border-white/[0.08] dark:bg-gray-950 lg:border-l lg:border-t-0">

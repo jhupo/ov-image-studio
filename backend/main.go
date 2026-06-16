@@ -19,6 +19,7 @@ import (
 	"ov-image-studio/backend/internal/httpserver"
 	"ov-image-studio/backend/internal/imagejobs"
 	"ov-image-studio/backend/internal/keys"
+	"ov-image-studio/backend/internal/prompttemplates"
 	"ov-image-studio/backend/internal/queue"
 	"ov-image-studio/backend/internal/security"
 	"ov-image-studio/backend/internal/sub2api"
@@ -62,6 +63,11 @@ func main() {
 		jobRepo := imagejobs.NewRepository(database)
 		jobService := imagejobs.NewService(jobRepo, assetService, redisQueue, secrets, sub2apiClient)
 		imagejobs.NewHandler(jobService, cfg.MaxCreateRequestBytes).Register(mux)
+
+		promptTemplateRepo := prompttemplates.NewRepository(database)
+		promptTemplateService := prompttemplates.NewService(promptTemplateRepo, cfg.PromptTemplateSourceURL)
+		prompttemplates.NewHandler(promptTemplateService).Register(mux)
+		promptTemplateService.SyncOnStartup(ctx)
 
 		if ids, err := jobRepo.RequeueUnfinished(ctx); err == nil {
 			for _, id := range ids {

@@ -1,14 +1,37 @@
-import { GENERATED_PROMPT_TEMPLATES } from './promptTemplates.generated'
-
 export interface PromptTemplate {
   id: string
+  source: string
+  sourceExternalId: string
   title: string
   prompt: string
   summary: string
   category: string
   tags: string[]
-  imageUrl: string
+  imageUrls: string[]
   author: string
+  sourceUrl: string
+  detailUrl: string
+  featured: boolean
+  raycast: boolean
+  language: string
+  sortOrder: number
+  syncedAt: string
+}
+
+export interface PromptTemplateListResult {
+  items: PromptTemplate[]
+  total: number
+  page: number
+  pageSize: number
+  categories: string[]
+}
+
+export interface FetchPromptTemplatesOptions {
+  page?: number
+  pageSize?: number
+  q?: string
+  category?: string
+  ids?: string[]
 }
 
 type PromptPrimitive = string | number | boolean | null
@@ -49,54 +72,55 @@ export function formatTemplatePrompt(prompt: string): string {
   }
 }
 
-const PROMPT_TEMPLATES: PromptTemplate[] = GENERATED_PROMPT_TEMPLATES.map((template) => ({
-  ...template,
-  tags: [...template.tags],
-}))
-
-const CATEGORY_LABELS: Record<string, string> = {
-  精选: '精选',
-  社区提示词: '社区提示词',
-  '个人资料 / 头像': '个人资料 / 头像',
-  社交媒体帖子: '社交媒体帖子',
-  '信息图 / 教育视觉图': '信息图 / 教育视觉图',
-  'YouTube 缩略图': 'YouTube 缩略图',
-  '漫画 / 故事板': '漫画 / 故事板',
-  产品营销: '产品营销',
-  电商主图: '电商主图',
-  游戏素材: '游戏素材',
-  '海报 / 传单': '海报 / 传单',
-  'App / 网页设计': 'App / 网页设计',
-  摄影: '摄影',
-  '电影 / 电影剧照': '电影 / 电影剧照',
-  '动漫 / 漫画': '动漫 / 漫画',
-  插画: '插画',
-  '草图 / 线稿': '草图 / 线稿',
-  '3D 渲染': '3D 渲染',
-  'Q 版 / Q 萌风': 'Q 版 / Q 萌风',
-  等距: '等距',
-  像素艺术: '像素艺术',
-  油画: '油画',
-  水彩画: '水彩画',
-  '水墨 / 中国风': '水墨 / 中国风',
-  '复古 / 怀旧': '复古 / 怀旧',
-  '赛博朋克 / 科幻': '赛博朋克 / 科幻',
-  极简主义: '极简主义',
-  '人像 / 自拍': '人像 / 自拍',
-  产品: '产品',
-  '食品 / 饮料': '食品 / 饮料',
-  '建筑 / 室内设计': '建筑 / 室内设计',
-  '风景 / 自然': '风景 / 自然',
-  '文本 / 排版': '文本 / 排版',
-}
-
 export function getPromptCategoryLabel(category: string) {
-  return CATEGORY_LABELS[category] ?? category
+  return category
 }
 
-export async function fetchPromptTemplates(): Promise<PromptTemplate[]> {
-  return PROMPT_TEMPLATES.map((template) => ({
+export function promptTemplateImageURL(template: PromptTemplate, index = 0) {
+  if (!template.imageUrls.length) return ''
+  return `/api/prompt-templates/${encodeURIComponent(template.id)}/images/${index}`
+}
+
+type RawPromptTemplate = PromptTemplate & {
+  imageUrl?: string
+  image_url?: string
+  image_urls?: string[]
+}
+
+function normalizeTemplate(template: RawPromptTemplate): PromptTemplate {
+  const imageUrls = Array.isArray(template.imageUrls)
+    ? template.imageUrls
+    : Array.isArray(template.image_urls)
+      ? template.image_urls
+      : [template.imageUrl, template.image_url].filter((value): value is string => typeof value === 'string' && value.length > 0)
+  return {
     ...template,
-    prompt: formatTemplatePrompt(template.prompt),
-  }))
+    prompt: formatTemplatePrompt(template.prompt || ''),
+    tags: Array.isArray(template.tags) ? template.tags : [],
+    imageUrls,
+  }
+}
+
+export async function fetchPromptTemplates(options: FetchPromptTemplatesOptions = {}): Promise<PromptTemplateListResult> {
+  const params = new URLSearchParams()
+  params.set('page', String(options.page ?? 1))
+  params.set('page_size', String(options.pageSize ?? 24))
+  if (options.q?.trim()) params.set('q', options.q.trim())
+  if (options.category?.trim()) params.set('category', options.category.trim())
+  for (const id of options.ids ?? []) {
+    if (id.trim()) params.append('ids', id.trim())
+  }
+
+  const response = await fetch(`/api/prompt-templates?${params.toString()}`)
+  if (!response.ok) {
+    throw new Error(`模板加载失败: HTTP ${response.status}`)
+  }
+  const result = (await response.json()) as PromptTemplateListResult & { items?: RawPromptTemplate[] }
+  return {
+    items: (result.items ?? []).map(normalizeTemplate),
+    total: Number(result.total) || 0,
+    page: Number(result.page) || 1,
+    pageSize: Number(result.pageSize) || (options.pageSize ?? 24),
+    categories: Array.isArray(result.categories) ? result.categories.filter(Boolean) : [],
+  }
 }

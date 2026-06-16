@@ -52,6 +52,7 @@ APP_SECRET=change-this-to-a-long-random-secret
 DELETE_ASSETS_ON_ACK=true
 SITE_NAME=链路云
 SITE_URL=https://dash.ovload.com
+PROMPT_TEMPLATE_SOURCE_URL=https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main/README_zh.md
 ```
 
 `APP_SECRET` 用来短期加密任务内的 API Key。任务完成后后端会清理密文，只保留 key 指纹；前端持久化设置时也不会长期保存完整 `sk-...`。临时图片保存在 Postgres，前端下载写入 IndexedDB 后 ACK，后端会清空对应图片字节；未 ACK 的图片会按 `ASSET_TTL_SECONDS` 过期清理。

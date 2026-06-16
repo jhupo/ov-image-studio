@@ -197,9 +197,44 @@ CREATE TABLE IF NOT EXISTS agent_tool_calls (
   finished_at TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS prompt_templates (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  source_external_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '社区提示词',
+  tags JSONB NOT NULL DEFAULT '[]',
+  image_urls JSONB NOT NULL DEFAULT '[]',
+  author TEXT NOT NULL DEFAULT '',
+  source_url TEXT NOT NULL DEFAULT '',
+  detail_url TEXT NOT NULL DEFAULT '',
+  featured BOOLEAN NOT NULL DEFAULT false,
+  raycast BOOLEAN NOT NULL DEFAULT false,
+  language TEXT NOT NULL DEFAULT '',
+  sort_order INT NOT NULL DEFAULT 0,
+  active BOOLEAN NOT NULL DEFAULT true,
+  raw JSONB NOT NULL DEFAULT '{}',
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(source, source_external_id)
+);
+
+CREATE TABLE IF NOT EXISTS prompt_template_syncs (
+  source TEXT PRIMARY KEY,
+  source_url TEXT NOT NULL DEFAULT '',
+  item_count INT NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_image_jobs_status_created ON image_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_assets_expires ON assets(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status_created ON agent_runs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_response_runs_status_created ON agent_response_runs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_events_run_id_id ON agent_events(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_prompt_templates_active_sort ON prompt_templates(active, sort_order);
+CREATE INDEX IF NOT EXISTS idx_prompt_templates_category ON prompt_templates(category);
 `
