@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import { fetchPromptTemplates, getPromptCategoryLabel, type PromptTemplate } from '../lib/promptTemplates'
+import { fetchPromptTemplates, formatTemplatePrompt, getPromptCategoryLabel, type PromptTemplate } from '../lib/promptTemplates'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { useStore } from '../store'
 
@@ -93,7 +93,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
 
   const useTemplate = (template: PromptTemplate) => {
     rememberTemplate(template)
-    setPrompt(template.prompt)
+    setPrompt(formatTemplatePrompt(template.prompt))
     showToast('已填入提示词', 'success')
     onClose()
   }
@@ -117,7 +117,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
 
   const copyTemplate = async (template: PromptTemplate) => {
     try {
-      await copyTextToClipboard(template.prompt)
+      await copyTextToClipboard(formatTemplatePrompt(template.prompt))
       showToast('提示词已复制', 'success')
     } catch (err) {
       showToast(getClipboardFailureMessage('复制失败', err), 'error')
