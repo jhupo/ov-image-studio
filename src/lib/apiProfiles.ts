@@ -18,7 +18,7 @@ import { shouldUseApiProxy } from './devProxy'
 import { readRuntimeEnv } from './runtimeEnv'
 import { isImportableConfigUrl } from './customProviderConfigUrl'
 
-const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
+const OPENAI_DEFAULT_BASE_URL = '/'
 const RAW_DEFAULT_API_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL)
 const DEFAULT_OPENAI_API_PROXY = readRuntimeEnv(import.meta.env.VITE_API_PROXY_AVAILABLE) === 'true'
 const DOCKER_DEPLOYMENT = readRuntimeEnv(import.meta.env.VITE_DOCKER_DEPLOYMENT) === 'true'
@@ -29,12 +29,10 @@ const DEFAULT_BASE_URL = isImportableConfigUrl(RAW_DEFAULT_API_URL)
 const SAME_ORIGIN_API_URL_LOCKED = DOCKER_DEPLOYMENT && RAW_DEFAULT_API_URL === '/'
 export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-5.5'
-export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
-export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
 
-const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'fal'])
+const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
   generationPath: 'images/generations',
   editPath: 'images/edits',
@@ -126,6 +124,19 @@ function normalizeStringArray(value: unknown, fallback: string[]): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isRemovedProviderText(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim().toLowerCase()
+  const slug = normalized.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const removedSlug = ['f', 'al'].join('')
+  const tokens = slug.split('-').filter(Boolean)
+  return slug === removedSlug || slug.startsWith(`${removedSlug}-`) || tokens.includes(removedSlug)
+}
+
+function isRemovedCustomProviderRecord(record: Record<string, unknown>): boolean {
+  return isRemovedProviderText(record.id) || isRemovedProviderText(record.name) || isRemovedProviderText(record.baseUrl)
 }
 
 function normalizeRequestMethod(value: unknown, fallback: CustomProviderRequestMethod = 'POST'): CustomProviderRequestMethod {
@@ -261,7 +272,9 @@ function createCustomProviderId(name: string, usedIds: Set<string>): string {
 export function normalizeCustomProviderDefinition(input: unknown, usedIds = new Set<string>()): CustomProviderDefinition | null {
   if (!input || typeof input !== 'object') return null
   const rawRecord = input as Record<string, unknown>
+  if (isRemovedCustomProviderRecord(rawRecord)) return null
   const record = legacyCustomProviderToManifest(rawRecord) ?? rawRecord
+  if (isRemovedCustomProviderRecord(record)) return null
   const template = record.template == null ? 'http-image' : isCustomProviderTemplate(record.template) ? record.template : null
   if (!template || !isRecord(record.submit)) return null
 
@@ -323,24 +336,6 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
   }
 }
 
-export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
-  return {
-    id: `fal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-    name: '新配置',
-    provider: 'fal',
-    baseUrl: DEFAULT_FAL_BASE_URL,
-    apiKey: '',
-    model: DEFAULT_FAL_MODEL,
-    timeout: DEFAULT_API_TIMEOUT,
-    apiMode: 'images',
-    codexCli: false,
-    apiProxy: false,
-    streamImages: false,
-    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
-    ...overrides,
-  }
-}
-
 export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvider, customProvider?: CustomProviderDefinition): ApiProfile {
   const providerDrafts = {
     ...profile.providerDrafts,
@@ -357,29 +352,12 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
   }
   const savedDraft = providerDrafts[provider]
 
-  if (provider === 'fal') {
-    return {
-      ...profile,
-      provider,
-      baseUrl: savedDraft?.baseUrl ?? DEFAULT_FAL_BASE_URL,
-      model: savedDraft?.model ?? DEFAULT_FAL_MODEL,
-      apiMode: 'images',
-      codexCli: false,
-      apiProxy: false,
-      responseFormatB64Json: savedDraft?.responseFormatB64Json,
-      streamImages: false,
-      streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
-      providerDrafts,
-    }
-  }
-
   if (customProvider) {
-    const shouldUseOpenAIDefaults = profile.provider === 'fal'
     return {
       ...profile,
       provider: customProvider.id,
-      baseUrl: savedDraft?.baseUrl ?? (shouldUseOpenAIDefaults ? DEFAULT_BASE_URL : profile.baseUrl || DEFAULT_BASE_URL),
-      model: savedDraft?.model ?? (shouldUseOpenAIDefaults ? DEFAULT_IMAGES_MODEL : profile.model || DEFAULT_IMAGES_MODEL),
+      baseUrl: savedDraft?.baseUrl ?? (profile.baseUrl || DEFAULT_BASE_URL),
+      model: savedDraft?.model ?? (profile.model || DEFAULT_IMAGES_MODEL),
       apiMode: 'images',
       codexCli: false,
       apiProxy: false,
@@ -415,17 +393,16 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
 
 function normalizeProviderDraft(input: unknown, provider: ApiProvider, customProviderIds: Set<string>): ApiProfileProviderDraft {
   if (!isRecord(input)) return undefined
-  const fallback = provider === 'fal' ? createDefaultFalProfile() : createDefaultOpenAIProfile()
+  if (isRemovedProviderText(provider)) return undefined
+  const fallback = createDefaultOpenAIProfile()
   const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : undefined
   const model = typeof input.model === 'string' && input.model.trim() ? input.model : undefined
   const apiMode = input.apiMode === 'responses' ? 'responses' : input.apiMode === 'images' ? 'images' : undefined
-  const knownProvider = provider === 'fal' || provider === 'openai' || customProviderIds.has(provider)
+  const knownProvider = provider === 'openai' || customProviderIds.has(provider)
   if (!knownProvider) return undefined
 
   return {
-    baseUrl: provider === 'fal'
-      ? baseUrl?.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL
-      : baseUrl,
+    baseUrl,
     model,
     apiMode,
     codexCli: typeof input.codexCli === 'boolean' ? input.codexCli : fallback.codexCli,
@@ -448,14 +425,13 @@ function normalizeProviderDrafts(input: unknown, customProviderIds: Set<string>)
 export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfile>, customProviderIds = new Set<string>()): ApiProfile {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const rawProvider = typeof record.provider === 'string' ? record.provider : ''
-  const provider: ApiProvider = rawProvider === 'fal' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
+  const removedProfile = isRemovedProviderText(rawProvider) || isRemovedProviderText(record.name) || isRemovedProviderText(record.baseUrl)
+  const provider: ApiProvider = customProviderIds.has(rawProvider) ? rawProvider : 'openai'
   const apiMode: ApiMode = provider === 'openai' && record.apiMode === 'responses' ? 'responses' : 'images'
-  const defaults = provider === 'fal'
-    ? createDefaultFalProfile(fallback)
-    : createDefaultOpenAIProfile({ ...fallback, apiMode })
-  const rawBaseUrl = SAME_ORIGIN_API_URL_LOCKED && provider !== 'fal'
+  const defaults = createDefaultOpenAIProfile({ ...fallback, apiMode })
+  const rawBaseUrl = SAME_ORIGIN_API_URL_LOCKED
     ? DEFAULT_BASE_URL
-    : typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
+    : removedProfile ? defaults.baseUrl : typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
   const streamImages = provider === 'openai'
     ? typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages
     : false
@@ -463,11 +439,11 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
   return {
     ...defaults,
     id: typeof record.id === 'string' && record.id.trim() ? record.id : defaults.id,
-    name: typeof record.name === 'string' && record.name.trim() ? record.name : defaults.name,
+    name: removedProfile ? defaults.name : typeof record.name === 'string' && record.name.trim() ? record.name : defaults.name,
     provider,
-    baseUrl: provider === 'fal' ? rawBaseUrl.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL : rawBaseUrl,
-    apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
-    model: typeof record.model === 'string' && record.model.trim() ? record.model : defaults.model,
+    baseUrl: rawBaseUrl,
+    apiKey: removedProfile ? defaults.apiKey : typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
+    model: removedProfile ? defaults.model : typeof record.model === 'string' && record.model.trim() ? record.model : defaults.model,
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,
     apiMode,
     codexCli: Boolean(record.codexCli),
@@ -531,7 +507,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     streamImages: active.streamImages,
     streamPartialImages: active.streamPartialImages,
     customProviders,
-    providerOrder: Array.isArray(record.providerOrder) ? record.providerOrder.map(String) : undefined,
+    providerOrder: Array.isArray(record.providerOrder) ? record.providerOrder.map(String).filter((provider) => !isRemovedProviderText(provider)) : undefined,
     clearInputAfterSubmit: typeof record.clearInputAfterSubmit === 'boolean' ? record.clearInputAfterSubmit : false,
     persistInputOnRestart: typeof record.persistInputOnRestart === 'boolean' ? record.persistInputOnRestart : true,
     reuseTaskApiProfileTemporarily: typeof record.reuseTaskApiProfileTemporarily === 'boolean' ? record.reuseTaskApiProfileTemporarily : false,
@@ -556,7 +532,6 @@ export function getCustomProviderDefinition(settings: Partial<AppSettings> | unk
 }
 
 export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, provider: ApiProvider): string {
-  if (provider === 'fal') return 'fal.ai'
   if (provider === 'openai') return 'OpenAI'
   return getCustomProviderDefinition(settings, provider)?.name ?? provider
 }
@@ -649,7 +624,7 @@ export function getActiveApiProfile(settings: Partial<AppSettings> | unknown): A
 
 export function validateApiProfile(profile: ApiProfile): string | null {
   if (!profile.name.trim()) return '缺少名称'
-  if (profile.provider !== 'fal' && !profile.baseUrl.trim() && !shouldUseApiProxy(profile.apiProxy)) return '缺少 API URL'
+  if (!profile.baseUrl.trim() && !shouldUseApiProxy(profile.apiProxy)) return '缺少 API URL'
   if (!profile.apiKey.trim()) return '缺少 API Key'
   if (!profile.model.trim()) return '缺少模型 ID'
   return null

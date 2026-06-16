@@ -19,7 +19,7 @@ describe('custom provider config URL', () => {
   it('detects importable URL values', () => {
     expect(isImportableConfigUrl('https://example.com/provider.json')).toBe(true)
     expect(isImportableConfigUrl('https://example.com/?settings={}')).toBe(true)
-    expect(isImportableConfigUrl('https://api.openai.com/v1')).toBe(false)
+    expect(isImportableConfigUrl('https://api.invalid/v1')).toBe(false)
   })
 
   it('returns null for empty URL', async () => {

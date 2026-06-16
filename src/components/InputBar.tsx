@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ALL_FAVORITES_COLLECTION_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
-import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
+import { getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, getSelectedTextMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -777,40 +777,26 @@ export default function InputBar() {
     syncMentionTagSelection(el)
     setPrompt(getContentEditablePlainText(el))
   }, [setPrompt])
-  const activeProvider = activeProfile.provider
-  const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount = appMode === 'agent' && activeProfile.provider === 'openai' && activeProfile.apiMode === 'responses'
-  const moderationDisabled = isFalProvider
   const transparentOutputAvailable = appMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && params.output_format === 'png'
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
-  const compressionDisabled = params.output_format === 'png' || isFalProvider
+  const compressionDisabled = params.output_format === 'png'
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
-  const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
   const streamConcurrentByN = activeProfile.provider === 'openai' && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
-    : isFalProvider
-    ? `fal.ai 最大请求数量为 ${outputImageLimit}`
     : `OpenAI 最大请求数量为 ${outputImageLimit}`
-  const displaySize = isFalTextToImage && params.size === 'auto'
-    ? DEFAULT_FAL_IMAGE_SIZE
-    : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
+  const displaySize = normalizeImageSize(params.size) || DEFAULT_PARAMS.size
 
-  const qualityOptions = isFalProvider
-    ? [
-        { label: 'low', value: 'low' },
-        { label: 'medium', value: 'medium' },
-        { label: 'high', value: 'high' },
-      ]
-    : [
-        { label: 'auto', value: 'auto' },
-        { label: 'low', value: 'low' },
-        { label: 'medium', value: 'medium' },
-        { label: 'high', value: 'high' },
-      ]
+  const qualityOptions = [
+    { label: 'auto', value: 'auto' },
+    { label: 'low', value: 'low' },
+    { label: 'medium', value: 'medium' },
+    { label: 'high', value: 'high' },
+  ]
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
   const transparentOutputHint = useHintTooltip()
@@ -818,9 +804,7 @@ export default function InputBar() {
     if (open) transparentOutputHint.hide()
   }, [transparentOutputHint.hide])
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
-  const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
-  const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage })
-  const qualityHint = useHintTooltip({ enabled: () => settings.codexCli || isFalProvider })
+  const qualityHint = useHintTooltip({ enabled: () => settings.codexCli })
   const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
   const maskTargetImage = maskDraft
     ? inputImages.find((img) => img.id === maskDraft.targetImageId) ?? null
@@ -1923,15 +1907,7 @@ export default function InputBar() {
 
   const renderParams = (cols: string) => (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
-      <label
-        className="relative flex flex-col gap-0.5"
-        onMouseEnter={sizeHint.show}
-        onMouseLeave={sizeHint.hide}
-        onTouchStart={sizeHint.startTouch}
-        onTouchEnd={sizeHint.clearTimer}
-        onTouchCancel={sizeHint.hide}
-        onClick={sizeHint.show}
-      >
+      <label className="relative flex flex-col gap-0.5">
         <span className="text-gray-400 dark:text-gray-500 ml-1">尺寸</span>
         <button
           type="button"
@@ -1941,10 +1917,6 @@ export default function InputBar() {
         >
           {displaySize}
         </button>
-        <ButtonTooltip
-          visible={isFalTextToImage && sizeHint.visible}
-          text={<>fal.ai 的文生图模式不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 参数</>}
-        />
       </label>
       <label
         className="relative flex flex-col gap-0.5"
@@ -1957,7 +1929,7 @@ export default function InputBar() {
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">质量</span>
         <Select
-          value={settings.codexCli ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
+          value={settings.codexCli ? 'auto' : params.quality}
           onChange={(val) => {
             if (!settings.codexCli) setParams({ quality: val as any })
           }}
@@ -1968,8 +1940,8 @@ export default function InputBar() {
             : selectClass}
         />
         <ButtonTooltip
-          visible={(settings.codexCli || isFalProvider) && qualityHint.visible}
-          text={isFalProvider ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</> : 'Codex CLI 不支持质量参数'}
+          visible={settings.codexCli && qualityHint.visible}
+          text="Codex CLI 不支持质量参数"
         />
       </label>
       <label className="flex flex-col gap-0.5">
@@ -2047,37 +2019,24 @@ export default function InputBar() {
           />
           <ButtonTooltip
             visible={compressionHint.visible}
-            text={isFalProvider ? 'fal.ai 不支持压缩率参数' : '仅 JPEG 和 WebP 支持压缩率'}
+            text="仅 JPEG 和 WebP 支持压缩率"
           />
         </label>
       )}
       <label
         className="relative flex flex-col gap-0.5"
-        onMouseEnter={moderationHint.show}
-        onMouseLeave={moderationHint.hide}
-        onTouchStart={moderationHint.startTouch}
-        onTouchEnd={moderationHint.clearTimer}
-        onTouchCancel={moderationHint.hide}
-        onClick={moderationHint.show}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">审核</span>
         <Select
-          value={moderationDisabled ? 'auto' : params.moderation}
+          value={params.moderation}
           onChange={(val) => {
-            if (!moderationDisabled) setParams({ moderation: val as any })
+            setParams({ moderation: val as any })
           }}
           options={[
             { label: 'auto', value: 'auto' },
             { label: 'low', value: 'low' },
           ]}
-          disabled={moderationDisabled}
-          className={moderationDisabled
-            ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
-            : selectClass}
-        />
-        <ButtonTooltip
-          visible={moderationDisabled && moderationHint.visible}
-          text="fal.ai 不支持审核参数"
+          className={selectClass}
         />
       </label>
       <label
@@ -2168,10 +2127,9 @@ export default function InputBar() {
 
       {showSizePicker && (
         <SizePickerModal
-          currentSize={isFalTextToImage && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size}
+          currentSize={params.size}
           onSelect={(size) => setParams({ size })}
           onClose={() => setShowSizePicker(false)}
-          allowAuto={!isFalTextToImage}
         />
       )}
 

@@ -164,6 +164,12 @@ function isAgentRoundInterrupted(round: AgentRound | null) {
   return round?.status === 'error' && round.error === AGENT_STOPPED_MESSAGE
 }
 
+function getAgentRoundDisplayError(round: AgentRound | null, content: string) {
+  if (round?.status !== 'error' || round.error === AGENT_STOPPED_MESSAGE) return ''
+  if (content.startsWith('请求失败：')) return content.replace(/^请求失败：/, '')
+  return round.error || ''
+}
+
 function markToolStatusStopped(status: AgentWebSearchStatus): AgentWebSearchStatus {
   if (status.completed) return status
   return { text: status.text.replace(/^正在/, '已停止'), completed: true }
@@ -1016,6 +1022,7 @@ export default function AgentWorkspace() {
                 const hasRoundFavoriteTasks = favoriteTasksForRound.length > 0
                 const allRoundTasksFavorited = hasRoundFavoriteTasks && favoriteTasksForRound.every((task) => task.isFavorite)
                 const assistantBlocks = isAssistant ? getAgentAssistantBlocks(round ?? null, taskSlotsForRound, tasks, Boolean(message.content.trim())) : []
+                const displayError = isAssistant ? getAgentRoundDisplayError(round ?? null, message.content) : ''
                 const inputImagesForRound = (round?.inputImageIds || []).map(id => ({ id, dataUrl: '' }))
                 const parts = getPromptMentionParts(message.content, inputImagesForRound)
                 return (
@@ -1053,17 +1060,16 @@ export default function AgentWorkspace() {
                       </div>
                     )}
 
-                    {round?.status === 'error' && isAssistant && message.content.startsWith('请求失败：') ? (
+                    {displayError ? (
                       <div
                         data-selectable-text
                         className="-m-2 flex cursor-copy select-text flex-col rounded-xl p-2 transition-colors hover:bg-red-50/60 dark:hover:bg-red-500/5"
                         title="点击复制完整报错"
                         onPointerDown={handleErrorCopyPointerDown}
-                        onClick={(e) => handleErrorCopyClick(e, message.content)}
+                        onClick={(e) => handleErrorCopyClick(e, `请求失败：${displayError}`)}
                       >
                         {(() => {
-                          const content = message.content.replace(/^请求失败：/, '');
-                          const [mainErr, ...hints] = content.split('\n提示：');
+                          const [mainErr, ...hints] = displayError.split('\n提示：');
                           return (
                             <>
                               <div className="flex items-start gap-2 text-red-500 dark:text-red-400">

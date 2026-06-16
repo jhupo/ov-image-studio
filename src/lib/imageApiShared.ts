@@ -16,7 +16,6 @@ export interface CallApiOptions {
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
   maskDataUrl?: string
-  onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
   onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void
 }
@@ -24,6 +23,8 @@ export interface CallApiOptions {
 export interface CallApiResult {
   /** base64 data URL 列表 */
   images: string[]
+  /** 前端确认图片已写入 IndexedDB 后调用，用于清理后端临时资产 */
+  cleanup?: () => Promise<void>
   /** API 返回的实际生效参数 */
   actualParams?: Partial<TaskParams>
   /** 每张图片对应的实际生效参数 */

@@ -77,7 +77,7 @@ export default function SupportPromptModal() {
             项目主页
           </a>
           <a
-            href="https://github.com/jhupo/ov-image-studio/issues"
+            href="https://dash.ovload.com"
             target="_blank"
             rel="noopener noreferrer"
             onClick={dismissSupportPrompt}

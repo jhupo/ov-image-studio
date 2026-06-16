@@ -1,7 +1,116 @@
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
-import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
-import { appendStreamingFormatHint, maybeAppendStreamingHint, getApiErrorMessage, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
-import { queuedFetch } from './queuedFetch'
+import { appendStreamingFormatHint, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
+
+export const AGENT_USER_STOP_REASON = 'agent_user_stop'
+
+function createAgentTimeoutError(timeoutSeconds: number) {
+  return new Error(`Request timed out after ${timeoutSeconds} seconds. Please retry later or increase the timeout.`)
+}
+
+function abortController(controller: AbortController, reason?: Error) {
+  if (controller.signal.aborted) return
+  controller.abort(reason)
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const timer = window.setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => {
+      window.clearTimeout(timer)
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'))
+    }, { once: true })
+  })
+}
+
+async function readBackendError(response: Response, fallback: string) {
+  const textResponse = response.clone()
+  try {
+    const payload = await response.json()
+    return payload?.error?.message || payload?.message || fallback
+  } catch {
+    try {
+      return (await textResponse.text()) || fallback
+    } catch {
+      return fallback
+    }
+  }
+}
+
+interface AgentRunView {
+  run: {
+    id: string
+    status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+    response?: ResponsesApiResponse
+    error?: { message?: string; code?: string; category?: string; retryable?: boolean }
+  }
+}
+
+const AGENT_POLL_INTERVAL_MS = 1500
+
+async function createAgentRun(profile: ApiProfile, request: Record<string, unknown>, signal?: AbortSignal) {
+  const response = await fetch('/api/agent/runs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    signal,
+    body: JSON.stringify({
+      manualApiKey: profile.apiKey,
+      model: typeof request.model === 'string' ? request.model : profile.model,
+      request,
+    }),
+  })
+  if (!response.ok) throw new Error(await readBackendError(response, `Agent run create failed: HTTP ${response.status}`))
+  const payload = await response.json() as AgentRunView
+  const id = payload.run?.id
+  if (!id) throw new Error('Agent run did not return a run id')
+  return id
+}
+
+async function getAgentRun(runId: string, signal?: AbortSignal): Promise<AgentRunView> {
+  const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}`, {
+    cache: 'no-store',
+    signal,
+  })
+  if (!response.ok) throw new Error(await readBackendError(response, `Agent run query failed: HTTP ${response.status}`))
+  return response.json() as Promise<AgentRunView>
+}
+
+async function cancelAgentRun(runId: string) {
+  try {
+    await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+      cache: 'no-store',
+    })
+  } catch {
+    // Backend cancellation is best effort; the run also has persisted terminal state.
+  }
+}
+
+async function runAgentResponses(profile: ApiProfile, body: Record<string, unknown>, signal?: AbortSignal): Promise<ResponsesApiResponse> {
+  const runId = await createAgentRun(profile, body, signal)
+  const cancelOnAbort = () => {
+    void cancelAgentRun(runId)
+  }
+  signal?.addEventListener('abort', cancelOnAbort, { once: true })
+  try {
+    while (true) {
+      await sleep(AGENT_POLL_INTERVAL_MS, signal)
+      const view = await getAgentRun(runId, signal)
+      const status = view.run.status
+      if (status === 'queued' || status === 'running') continue
+      if (status === 'cancelled') throw new DOMException('Aborted', 'AbortError')
+      if (status === 'error') throw new Error(view.run.error?.message || 'Agent run failed')
+      if (!view.run.response) throw new Error('Agent run completed without response data')
+      return view.run.response
+    }
+  } finally {
+    signal?.removeEventListener('abort', cancelOnAbort)
+  }
+}
 
 export interface AgentApiResultImage {
   toolCallId?: string
@@ -662,14 +771,12 @@ export async function callAgentResponsesApi(opts: {
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
   onImageToolFailed?: (event: AgentApiImageToolFailure) => void | Promise<void>
 }): Promise<AgentApiResult> {
-  const { settings, profile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed } = opts
+  const { settings, profile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImageToolCompleted } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
-  const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
-  const abortFromCaller = () => controller.abort()
-  if (signal?.aborted) controller.abort()
+  const timeoutId = setTimeout(() => abortController(controller, createAgentTimeoutError(profile.timeout)), profile.timeout * 1000)
+  const abortFromCaller = () => abortController(controller, signal?.reason instanceof Error ? signal.reason : undefined)
+  if (signal?.aborted) abortFromCaller()
   signal?.addEventListener('abort', abortFromCaller, { once: true })
 
   try {
@@ -679,34 +786,25 @@ export async function callAgentResponsesApi(opts: {
       input,
       tools: createAgentTools(params, profile, settings, maskDataUrl),
     }
-    if (profile.streamImages) {
-      body.stream = true
-    }
+    if (profile.streamImages) body.stream = true
 
-    const response = await queuedFetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
-      method: 'POST',
-      headers: createHeaders(profile),
-      cache: 'no-store',
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      const errorMessage = await getApiErrorMessage(response)
-      throw new Error(maybeAppendStreamingHint(errorMessage, response.status, profile.streamImages))
-    }
-
-    if (profile.streamImages && isEventStreamResponse(response)) {
-      return parseAgentStreamResponse(response, mime, controller.signal, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed)
-    }
-
-    const payload = await response.json() as ResponsesApiResponse
+    const payload = await runAgentResponses(profile, body, controller.signal)
     throwIfAborted(controller.signal, signal)
+    const images = extractImages(payload, mime)
+    for (const item of payload.output ?? []) {
+      if (item.type === 'image_generation_call' && typeof item.id === 'string') {
+        await onImageToolStarted?.({ toolCallId: item.id })
+      }
+    }
+    for (const image of images) await onImageToolCompleted?.(image)
+    const text = extractText(payload)
+    if (text) onTextDelta?.(text)
+    onOutputItems?.(payload.output ?? [])
     return {
       responseId: payload.id,
-      text: extractText(payload),
-      images: extractImages(payload, mime),
-      outputItems: payload.output,
+      text,
+      images,
+      outputItems: payload.output ?? [],
       rawResponsePayload: JSON.stringify(payload, null, 2),
     }
   } finally {
@@ -714,7 +812,6 @@ export async function callAgentResponsesApi(opts: {
     signal?.removeEventListener('abort', abortFromCaller)
   }
 }
-
 export async function callAgentConversationTitleApi(opts: {
   settings: AppSettings
   profile: ApiProfile
@@ -723,12 +820,10 @@ export async function callAgentConversationTitleApi(opts: {
   signal?: AbortSignal
 }): Promise<string> {
   const { settings, profile, prompt, imageDataUrls, signal } = opts
-  const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
-  const abortFromCaller = () => controller.abort()
-  if (signal?.aborted) controller.abort()
+  const timeoutId = setTimeout(() => abortController(controller, createAgentTimeoutError(profile.timeout)), profile.timeout * 1000)
+  const abortFromCaller = () => abortController(controller, signal?.reason instanceof Error ? signal.reason : undefined)
+  if (signal?.aborted) abortFromCaller()
   signal?.addEventListener('abort', abortFromCaller, { once: true })
 
   try {
@@ -739,41 +834,18 @@ export async function callAgentConversationTitleApi(opts: {
       content.push({ type: 'input_image', image_url: dataUrl })
     }
 
-    const response = await queuedFetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
-      method: 'POST',
-      headers: createHeaders(profile),
-      cache: 'no-store',
-      body: JSON.stringify({
-        model: profile.model || settings.model,
-        instructions: AGENT_TITLE_INSTRUCTIONS,
-        input: [{ role: 'user', content }],
-        max_output_tokens: 32,
-      }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error(await getApiErrorMessage(response))
-    }
-
-    const payload = await response.json() as ResponsesApiResponse
+    const payload = await runAgentResponses(profile, {
+      model: profile.model || settings.model,
+      instructions: AGENT_TITLE_INSTRUCTIONS,
+      input: [{ role: 'user', content }],
+      max_output_tokens: 32,
+    }, controller.signal)
     return parseAgentConversationTitleXml(extractText(payload))
   } finally {
     clearTimeout(timeoutId)
     signal?.removeEventListener('abort', abortFromCaller)
   }
 }
-
-// ---------------------------------------------------------------------------
-// Batch image generation: execute a single image via Responses API
-// Uses the same pattern as gallery Responses API mode:
-//   - PROMPT_REWRITE_GUARD to prevent prompt modification
-//   - tool_choice: 'required' to force immediate generation
-//   - Reference images passed as input_image
-// ---------------------------------------------------------------------------
-
-const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
-
 export interface BatchImageCallResult {
   /** The batch item id from the model's function call */
   batchItemId: string
@@ -781,6 +853,8 @@ export interface BatchImageCallResult {
   error: string | null
   rawResponsePayload?: string
 }
+
+const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
 
 /**
  * Generate a single image using Responses API with prompt-rewrite guard.
@@ -798,39 +872,32 @@ export async function callBatchImageSingle(opts: {
   onPartialImage?: (event: { image: string; partialImageIndex?: number }) => void | Promise<void>
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
 }): Promise<BatchImageCallResult> {
-  const { profile, params, batchItemId, prompt, referenceImageDataUrls, referenceIds, signal, onImageToolStarted, onPartialImage, onImageToolCompleted } = opts
+  const { profile, params, batchItemId, prompt, referenceImageDataUrls, referenceIds, signal, onImageToolStarted, onImageToolCompleted } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
-  const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
-  const abortFromCaller = () => controller.abort()
-  if (signal?.aborted) controller.abort()
+  const timeoutId = setTimeout(() => abortController(controller, createAgentTimeoutError(profile.timeout)), profile.timeout * 1000)
+  const abortFromCaller = () => abortController(controller, signal?.reason instanceof Error ? signal.reason : undefined)
+  if (signal?.aborted) abortFromCaller()
   signal?.addEventListener('abort', abortFromCaller, { once: true })
 
   try {
-    // Build input: reference id mapping + prompt-rewrite guard + reference images.
     const referenceMapping = referenceImageDataUrls.length > 0
       ? `Attached reference images correspond to these ids, in order: ${(referenceIds ?? []).map((id) => `<ref id="${id}" />`).join(', ') || 'reference images'}.`
       : ''
     const guardedPrompt = [referenceMapping, `${PROMPT_REWRITE_GUARD_PREFIX}\n${prompt}`].filter(Boolean).join('\n\n')
-    let input: unknown
-    if (referenceImageDataUrls.length > 0) {
-      input = [{
-        role: 'user',
-        content: [
-          { type: 'input_text', text: guardedPrompt },
-          ...referenceImageDataUrls.map((dataUrl) => ({
-            type: 'input_image',
-            image_url: dataUrl,
-          })),
-        ],
-      }]
-    } else {
-      input = guardedPrompt
-    }
+    const input: unknown = referenceImageDataUrls.length > 0
+      ? [{
+          role: 'user',
+          content: [
+            { type: 'input_text', text: guardedPrompt },
+            ...referenceImageDataUrls.map((dataUrl) => ({
+              type: 'input_image',
+              image_url: dataUrl,
+            })),
+          ],
+        }]
+      : guardedPrompt
 
-    // Build image_generation tool with current params
     const tool: Record<string, unknown> = {
       type: 'image_generation',
       action: referenceImageDataUrls.length > 0 ? 'auto' : 'generate',
@@ -852,91 +919,25 @@ export async function callBatchImageSingle(opts: {
       tools: [tool],
       tool_choice: 'required',
     }
-    if (profile.streamImages) {
-      body.stream = true
-    }
+    if (profile.streamImages) body.stream = true
 
-    const response = await queuedFetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
-      method: 'POST',
-      headers: createHeaders(profile),
-      cache: 'no-store',
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      const errorMsg = await getApiErrorMessage(response)
-      return { batchItemId, image: null, error: maybeAppendStreamingHint(errorMsg, response.status, profile.streamImages) }
-    }
-
-    // Handle streaming
-    if (profile.streamImages && isEventStreamResponse(response)) {
-      await onImageToolStarted?.()
-      let completedImage: AgentApiResultImage | null = null
-      let rawPayload: string | undefined
-
-      await readJsonServerSentEvents(response, async (event) => {
-        const type = getStringValue(event, 'type')
-
-        if (type === 'response.image_generation_call.partial_image') {
-          const b64 = getStringValue(event, 'partial_image_b64')
-          if (b64) {
-            await onPartialImage?.({
-              image: normalizeBase64Image(b64, mime),
-              partialImageIndex: getNumberValue(event, 'partial_image_index'),
-            })
-          }
-          return
-        }
-
-        if (type === 'response.output_item.done') {
-          const payload = getStreamResponsePayload(event)
-          const item = payload?.output?.[0]
-          if (item) {
-            const img = extractImageFromOutputItem(item, mime)
-            if (img) {
-              completedImage = img
-              await onImageToolCompleted?.(img)
-            }
-          }
-          return
-        }
-
-        if (type === 'response.completed' || isRecordValue(event.response)) {
-          const payload = getStreamResponsePayload(event)
-          if (payload) rawPayload = JSON.stringify(payload, null, 2)
-          if (!completedImage && payload) {
-            const images = extractImages(payload, mime)
-            if (images.length > 0) {
-              completedImage = images[0]
-              await onImageToolCompleted?.(completedImage)
-            }
-          }
-        }
-      }, [controller.signal, signal])
-
-      return {
-        batchItemId,
-        image: completedImage,
-        error: completedImage ? null : '流式响应未返回图片',
-        rawResponsePayload: rawPayload,
-      }
-    }
-
-    // Non-streaming
-    const payload = await response.json() as ResponsesApiResponse
+    const payload = await runAgentResponses(profile, body, controller.signal)
     const images = extractImages(payload, mime)
     const image = images[0] ?? null
+    if (image?.toolCallId) await onImageToolStarted?.()
     if (image) await onImageToolCompleted?.(image)
     return {
       batchItemId,
       image,
-      error: image ? null : '接口未返回图片数据',
+      error: image ? null : 'Image data was not returned',
       rawResponsePayload: JSON.stringify(payload, null, 2),
     }
   } catch (err) {
-    if (controller.signal.aborted || signal?.aborted) {
-      return { batchItemId, image: null, error: '请求已取消' }
+    if (signal?.aborted) {
+      return { batchItemId, image: null, error: signal.reason instanceof Error ? signal.reason.message : 'Request was cancelled' }
+    }
+    if (controller.signal.aborted) {
+      return { batchItemId, image: null, error: controller.signal.reason instanceof Error ? controller.signal.reason.message : 'Request was cancelled' }
     }
     return { batchItemId, image: null, error: err instanceof Error ? err.message : String(err) }
   } finally {
@@ -944,8 +945,6 @@ export async function callBatchImageSingle(opts: {
     signal?.removeEventListener('abort', abortFromCaller)
   }
 }
-
-/** Parse the arguments of a generate_image_batch function call */
 export function parseBatchImageCallArguments(args: string): Array<{ id: string; prompt: string }> | null {
   try {
     const parsed = JSON.parse(args) as { images?: unknown }

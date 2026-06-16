@@ -2,12 +2,10 @@ import { DEFAULT_PARAMS, type AppSettings, type TaskParams } from '../types'
 import { getActiveApiProfile } from './apiProfiles'
 import { normalizeImageSize } from './size'
 
-export const DEFAULT_FAL_IMAGE_SIZE = '1360x1024'
-export const MAX_FAL_OUTPUT_IMAGES = 4
 export const MAX_OPENAI_OUTPUT_IMAGES = 10
 
 export function getOutputImageLimitForSettings(settings: AppSettings) {
-  return getActiveApiProfile(settings).provider === 'fal' ? MAX_FAL_OUTPUT_IMAGES : MAX_OPENAI_OUTPUT_IMAGES
+  return MAX_OPENAI_OUTPUT_IMAGES
 }
 
 export function normalizeParamsForSettings(
@@ -25,13 +23,6 @@ export function normalizeParamsForSettings(
 
   if (activeProfile.provider === 'openai' && activeProfile.codexCli) {
     nextParams.quality = DEFAULT_PARAMS.quality
-  }
-
-  if (activeProfile.provider === 'fal') {
-    if (!options.hasInputImages && nextParams.size === 'auto') nextParams.size = DEFAULT_FAL_IMAGE_SIZE
-    if (nextParams.quality === 'auto') nextParams.quality = 'high'
-    nextParams.moderation = DEFAULT_PARAMS.moderation
-    nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
   if (nextParams.output_format === 'png') {

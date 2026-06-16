@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  createDefaultFalProfile,
   createDefaultOpenAIProfile,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_SETTINGS,
@@ -178,12 +177,12 @@ describe('URL settings params', () => {
     })
   })
 
-  it('creates an OpenAI profile from legacy params even when fal is active', () => {
-    const falProfile = createDefaultFalProfile({ id: 'fal-active', apiKey: 'fal-key' })
+  it('creates an OpenAI profile from legacy params when another profile is active', () => {
+    const activeProfile = createDefaultOpenAIProfile({ id: 'active-openai', baseUrl: 'https://active.example.com/v1', apiKey: 'active-key' })
     const current = normalizeSettings({
       ...DEFAULT_SETTINGS,
-      profiles: [falProfile],
-      activeProfileId: falProfile.id,
+      profiles: [activeProfile],
+      activeProfileId: activeProfile.id,
     })
     const next = normalizeSettings({
       ...current,

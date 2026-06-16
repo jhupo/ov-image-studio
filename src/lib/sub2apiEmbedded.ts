@@ -49,9 +49,9 @@ export async function fetchEmbeddedSub2ApiKeys(token: string, userId: number): P
   }
 
   const payload = await response.json() as {
-    items?: Array<{ id?: number; name?: string; key?: string; status?: string }>
-    data?: Array<{ id?: number; name?: string; key?: string; status?: string }> | {
-      items?: Array<{ id?: number; name?: string; key?: string; status?: string }>
+    items?: Array<{ id?: number; name?: string; key?: string; status?: string; group?: { allow_image_generation?: boolean } }>
+    data?: Array<{ id?: number; name?: string; key?: string; status?: string; group?: { allow_image_generation?: boolean } }> | {
+      items?: Array<{ id?: number; name?: string; key?: string; status?: string; group?: { allow_image_generation?: boolean } }>
     }
   }
 
@@ -70,5 +70,6 @@ export async function fetchEmbeddedSub2ApiKeys(token: string, userId: number): P
       name: typeof item.name === 'string' && item.name.trim() ? item.name : `Key #${item.id}`,
       key: String(item.key),
       status: typeof item.status === 'string' ? item.status : 'unknown',
+      allowImageGeneration: item.group?.allow_image_generation !== false,
     }))
 }

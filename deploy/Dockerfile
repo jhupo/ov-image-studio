@@ -16,14 +16,14 @@ COPY . .
 RUN VITE_DEFAULT_API_URL="$BASE_URL" VITE_DOCKER_DEPLOYMENT=true VITE_SHOW_DEFAULT_CONFIG_ONLY=false npm run build
 
 # ---- API stage ----
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS api-build
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS api-build
 
 WORKDIR /app
 
 ARG TARGETOS
 ARG TARGETARCH
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY backend ./backend
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/ov-image-studio ./backend
 

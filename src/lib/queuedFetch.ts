@@ -9,11 +9,42 @@ interface QueuedFetchTaskResponse {
   id: string
   status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
   error?: string
+  errorDetail?: QueuedFetchTaskErrorDetail
   response?: {
     statusCode: number
     status: string
     headers: Record<string, string>
     bodyBase64: string
+  }
+}
+
+interface QueuedFetchTaskErrorDetail {
+  code: string
+  message: string
+  category?: string
+  httpStatus?: number
+  upstreamStatusCode?: number
+  upstreamStatus?: string
+  upstreamBodyBase64?: string
+  upstreamBodyTruncated?: boolean
+  retryable?: boolean
+}
+
+export class QueuedFetchError extends Error {
+  code?: string
+  category?: string
+  upstreamStatusCode?: number
+  upstreamStatus?: string
+  rawResponsePayload?: string
+
+  constructor(message: string, detail?: QueuedFetchTaskErrorDetail) {
+    super(message)
+    this.name = 'QueuedFetchError'
+    this.code = detail?.code
+    this.category = detail?.category
+    this.upstreamStatusCode = detail?.upstreamStatusCode
+    this.upstreamStatus = detail?.upstreamStatus
+    this.rawResponsePayload = createRawResponsePayload(detail)
   }
 }
 
@@ -96,16 +127,102 @@ function base64ToUint8Array(value: string): Uint8Array {
   return bytes
 }
 
+function base64ToText(value: string): string {
+  return new TextDecoder().decode(base64ToUint8Array(value))
+}
+
+function pickJsonMessage(value: unknown): string {
+  if (!value || typeof value !== 'object') return ''
+  const record = value as Record<string, unknown>
+  const error = record.error
+  if (typeof error === 'string') return error.trim()
+  if (error && typeof error === 'object') {
+    const nested = pickJsonMessage(error)
+    if (nested) return nested
+  }
+  for (const key of ['message', 'detail', 'error_description']) {
+    const text = record[key]
+    if (typeof text === 'string' && text.trim()) return text.trim()
+  }
+  if (Array.isArray(record.detail)) {
+    return record.detail
+      .map((item) => typeof item === 'string' ? item : JSON.stringify(item))
+      .join('\n')
+      .trim()
+  }
+  return ''
+}
+
+function normalizeMessageText(text: string, maxLength = 1000): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(normalized)
+  return chars.length > maxLength ? `${chars.slice(0, maxLength).join('')}...` : normalized
+}
+
+function summarizeResponseText(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  try {
+    const json = JSON.parse(trimmed)
+    return normalizeMessageText(pickJsonMessage(json) || JSON.stringify(json))
+  } catch {
+    return normalizeMessageText(trimmed)
+  }
+}
+
+function createRawResponsePayload(detail?: QueuedFetchTaskErrorDetail): string | undefined {
+  if (!detail?.upstreamBodyBase64) return undefined
+  const bodyText = base64ToText(detail.upstreamBodyBase64)
+  try {
+    return JSON.stringify({
+      statusCode: detail.upstreamStatusCode,
+      status: detail.upstreamStatus,
+      body: JSON.parse(bodyText),
+      ...(detail.upstreamBodyTruncated ? { bodyTruncated: true } : {}),
+    }, null, 2)
+  } catch {
+    return bodyText
+  }
+}
+
+function formatTaskError(task: QueuedFetchTaskResponse): string {
+  const detail = task.errorDetail
+  if (!detail) return task.error || '任务执行失败'
+
+  if (detail.upstreamStatusCode) {
+    const status = detail.upstreamStatus || `HTTP ${detail.upstreamStatusCode}`
+    const bodySummary = detail.upstreamBodyBase64 ? summarizeResponseText(base64ToText(detail.upstreamBodyBase64)) : ''
+    const suffix = detail.upstreamBodyTruncated ? '（响应体已截断）' : ''
+    return bodySummary ? `上游返回 ${status}：${bodySummary}${suffix}` : `上游返回 ${status}`
+  }
+
+  if (detail.code === 'upstream_timeout') return '上游请求超时，请稍后重试或调高超时时间。'
+  if (detail.category === 'network') return `上游请求失败：${detail.message || task.error || '网络异常'}`
+  return detail.message || task.error || '任务执行失败'
+}
+
+async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+  const text = await response.text()
+  if (!text.trim()) return fallback
+  try {
+    const json = JSON.parse(text)
+    return pickJsonMessage(json) || text
+  } catch {
+    return text
+  }
+}
+
 function sleep(ms: number, signal?: AbortSignal) {
+  const abortError = () => signal?.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError')
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(abortError())
       return
     }
     const timer = window.setTimeout(resolve, ms)
     signal?.addEventListener('abort', () => {
       window.clearTimeout(timer)
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(abortError())
     }, { once: true })
   })
 }
@@ -115,7 +232,7 @@ async function readTask(taskId: string, signal?: AbortSignal): Promise<QueuedFet
     cache: 'no-store',
     signal,
   })
-  if (!response.ok) throw new Error(`任务查询失败：HTTP ${response.status}`)
+  if (!response.ok) throw new Error(await readErrorMessage(response, `任务查询失败：HTTP ${response.status}`))
   return response.json() as Promise<QueuedFetchTaskResponse>
 }
 
@@ -157,8 +274,7 @@ export async function queuedFetch(input: RequestInfo | URL, init: RequestInit = 
     signal: init.signal,
   })
   if (!created.ok) {
-    const message = await created.text()
-    throw new Error(message || `任务创建失败：HTTP ${created.status}`)
+    throw new Error(await readErrorMessage(created, `任务创建失败：HTTP ${created.status}`))
   }
 
   const task = await created.json() as QueuedFetchTaskResponse
@@ -174,7 +290,7 @@ export async function queuedFetch(input: RequestInfo | URL, init: RequestInit = 
       const current = await readTask(task.id, signal ?? undefined)
       if (current.status === 'queued' || current.status === 'running') continue
       if (current.status === 'cancelled') throw new DOMException('Aborted', 'AbortError')
-      if (current.status === 'error') throw new Error(current.error || '任务执行失败')
+      if (current.status === 'error') throw new QueuedFetchError(formatTaskError(current), current.errorDetail)
       if (!current.response) throw new Error('任务结果为空')
 
       const bytes = base64ToUint8Array(current.response.bodyBase64)

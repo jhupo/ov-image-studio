@@ -23,6 +23,15 @@ import {
 
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
 
+function createApiTimeoutError(timeoutSeconds: number) {
+  return new Error(`请求超时：超过 ${timeoutSeconds} 秒仍未完成，请稍后重试或调高超时时间。`)
+}
+
+function abortController(controller: AbortController, reason?: Error) {
+  if (controller.signal.aborted) return
+  controller.abort(reason)
+}
+
 function getStreamPartialImages(profile: ApiProfile): number {
   return profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
 }
@@ -564,7 +573,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   const paths = createOpenAICompatiblePaths()
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  const timeoutId = setTimeout(() => abortController(controller, createApiTimeoutError(profile.timeout)), profile.timeout * 1000)
 
   try {
     let response: Response
@@ -685,15 +694,16 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  const abortError = () => signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError')
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(abortError())
       return
     }
     const timer = setTimeout(resolve, ms)
     signal.addEventListener('abort', () => {
       clearTimeout(timer)
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(abortError())
     }, { once: true })
   })
 }
@@ -953,7 +963,7 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const controller = new AbortController()
-  let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => abortController(controller, createApiTimeoutError(profile.timeout)), profile.timeout * 1000)
 
   try {
     const proxyConfig = readClientDevProxyConfig()
@@ -1043,7 +1053,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  const timeoutId = setTimeout(() => abortController(controller, createApiTimeoutError(profile.timeout)), profile.timeout * 1000)
 
   try {
     if (opts.maskDataUrl) {

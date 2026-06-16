@@ -1,0 +1,38 @@
+services:
+  image-postgres:
+    image: postgres:16-alpine
+    container_name: image-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: image_studio
+      POSTGRES_USER: image
+      POSTGRES_PASSWORD: image_password
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - image-postgres-data:/var/lib/postgresql/data
+
+  image-redis:
+    image: redis:7-alpine
+    container_name: image-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - image-redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  chaincloud-image:
+    image: ghcr.io/jhupo/ov-image-studio:latest
+    container_name: chaincloud-image
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    depends_on:
+      - image-postgres
+      - image-redis
+
+volumes:
+  image-postgres-data:
+  image-redis-data:

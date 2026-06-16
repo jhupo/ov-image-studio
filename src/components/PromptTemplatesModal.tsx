@@ -70,7 +70,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
       if (activeCategory === RECENT_CATEGORY && !recentIds.includes(item.id)) return false
       if (![ALL_CATEGORY, FAVORITES_CATEGORY, RECENT_CATEGORY].includes(activeCategory) && item.category !== activeCategory) return false
       if (!normalizedQuery) return true
-      return [item.title, item.summary, item.prompt, item.category, item.author]
+      return [item.title, item.summary, item.prompt, item.category, item.author, ...item.tags]
         .join(' ')
         .toLowerCase()
         .includes(normalizedQuery)
@@ -146,7 +146,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
               <input
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="搜索模板、作者、分类、提示词..."
+                placeholder="搜索模板、作者、分类、标签、提示词..."
                 className="w-full rounded-xl border border-gray-200/70 bg-white/80 py-2.5 pl-10 pr-9 text-sm text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:bg-white dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100 dark:placeholder:text-gray-500 dark:focus:border-blue-500/60 dark:focus:bg-white/[0.06]"
               />
               {searchQuery && (
@@ -162,15 +162,15 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
               )}
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
-            {categories.map((category) => (
-              <button
-                key={category}
-                onClick={() => setActiveCategory(category)}
-                className={`shrink-0 rounded px-4 py-2 text-sm font-semibold transition ${activeCategory === category ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.08] dark:hover:text-gray-100'}`}
-              >
-                {categoryLabel(category)}
-              </button>
-            ))}
+              {categories.map((category) => (
+                <button
+                  key={category}
+                  onClick={() => setActiveCategory(category)}
+                  className={`shrink-0 rounded px-4 py-2 text-sm font-semibold transition ${activeCategory === category ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.08] dark:hover:text-gray-100'}`}
+                >
+                  {categoryLabel(category)}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -182,31 +182,38 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 {orderedVisibleTemplates.map((template) => (
                   <article key={template.id} className="group overflow-hidden rounded-lg border border-gray-200/70 bg-white/80 transition hover:border-blue-400/70 dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-blue-500/45">
                     <div className="relative aspect-[16/10] w-full overflow-hidden bg-gray-100 dark:bg-gray-900">
-                    <button type="button" onClick={() => setPreview(template)} className="block h-full w-full text-left">
-                      {template.imageUrl ? (
-                        <img src={template.imageUrl} alt={template.title} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-gray-100 text-sm font-semibold text-gray-500 dark:bg-gray-900">
-                          GPT Image 2
-                        </div>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleFavorite(template)}
-                      className={`absolute right-2 top-2 rounded-full bg-black/50 p-1.5 backdrop-blur transition ${favoriteIds.includes(template.id) ? 'text-yellow-300' : 'text-white/70 hover:text-yellow-200'}`}
-                      title={favoriteIds.includes(template.id) ? '取消收藏' : '收藏模板'}
-                    >
-                      <svg className="h-4 w-4" fill={favoriteIds.includes(template.id) ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                      </svg>
-                    </button>
+                      <button type="button" onClick={() => setPreview(template)} className="block h-full w-full text-left">
+                        {template.imageUrl ? (
+                          <img src={template.imageUrl} alt={template.title} loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-gray-100 text-sm font-semibold text-gray-500 dark:bg-gray-900">
+                            GPT Image 2
+                          </div>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleFavorite(template)}
+                        className={`absolute right-2 top-2 rounded-full bg-black/50 p-1.5 backdrop-blur transition ${favoriteIds.includes(template.id) ? 'text-yellow-300' : 'text-white/70 hover:text-yellow-200'}`}
+                        title={favoriteIds.includes(template.id) ? '取消收藏' : '收藏模板'}
+                      >
+                        <svg className="h-4 w-4" fill={favoriteIds.includes(template.id) ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                        </svg>
+                      </button>
                     </div>
                     <div className="space-y-3 p-3">
                       <button type="button" onClick={() => setPreview(template)} className="line-clamp-1 text-left text-base font-bold text-gray-900 dark:text-gray-100" title={template.title}>
                         {template.title}
                       </button>
                       <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-gray-600 dark:text-gray-300">{template.summary}</p>
+                      <div className="flex flex-wrap gap-1">
+                        {template.tags.slice(0, 3).map((tag) => (
+                          <span key={tag} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
                       <div className="flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-500">
                         <span className="min-w-0 truncate">{template.author || template.category}</span>
                         <div className="flex shrink-0 items-center gap-3">
@@ -266,6 +273,16 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                     <p className="text-sm leading-6 text-gray-600 dark:text-gray-300">{preview.summary}</p>
                   </section>
                   <section>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">标签</div>
+                    <div className="flex flex-wrap gap-2">
+                      {preview.tags.map((tag) => (
+                        <span key={tag} className="rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 dark:bg-white/[0.06] dark:text-gray-300">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+                  <section>
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">完整提示词</div>
                     <pre data-selectable-text className="box-border max-h-72 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-xl border border-gray-200/70 bg-gray-50 p-3 text-sm leading-6 text-gray-700 custom-scrollbar [overflow-wrap:anywhere] dark:border-white/[0.08] dark:bg-white/[0.035] dark:text-gray-200">
                       {preview.prompt}
@@ -297,4 +314,3 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
 
   return createPortal(modal, document.body)
 }
-

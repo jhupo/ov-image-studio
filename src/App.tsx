@@ -138,9 +138,11 @@ export default function App() {
         })
 
         const selectedApiKeyId = useStore.getState().settings.embeddedApiKeyId
-        const selectedApiKey = apiKeys.find((item) => item.id === selectedApiKeyId)
-          ?? apiKeys.find((item) => item.status === 'active')
-          ?? apiKeys[0]
+        const imageApiKeys = apiKeys.filter((item) => item.allowImageGeneration)
+        const selectableApiKeys = imageApiKeys.length ? imageApiKeys : apiKeys
+        const selectedApiKey = selectableApiKeys.find((item) => item.id === selectedApiKeyId)
+          ?? selectableApiKeys.find((item) => item.status === 'active')
+          ?? selectableApiKeys[0]
 
         if (!selectedApiKey) return
 

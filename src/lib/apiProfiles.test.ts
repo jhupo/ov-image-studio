@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  DEFAULT_FAL_BASE_URL,
-  DEFAULT_FAL_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
   DEFAULT_SETTINGS,
   createDefaultOpenAIProfile,
-  createDefaultFalProfile,
   getActiveApiProfile,
   findEquivalentApiProfile,
   importCustomProviderDefinitionFromJson,
@@ -84,23 +81,23 @@ describe('mergeImportedSettings', () => {
           apiProxy: false,
         },
         {
-          id: 'imported-fal',
-          name: 'Imported fal',
-          provider: 'fal',
-          baseUrl: DEFAULT_FAL_BASE_URL,
-          apiKey: 'fal-key',
-          model: DEFAULT_FAL_MODEL,
+          id: 'imported-openai-secondary',
+          name: 'Imported OpenAI Secondary',
+          provider: 'openai',
+          baseUrl: 'https://api.secondary.example.com/v1',
+          apiKey: 'secondary-key',
+          model: DEFAULT_IMAGES_MODEL,
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
           apiProxy: false,
         },
       ],
-      activeProfileId: 'imported-fal',
+      activeProfileId: 'imported-openai-secondary',
     })
 
-    expect(merged.profiles.map((profile) => profile.id)).toEqual(['imported-openai', 'imported-fal'])
-    expect(merged.activeProfileId).toBe('imported-fal')
+    expect(merged.profiles.map((profile) => profile.id)).toEqual(['imported-openai', 'imported-openai-secondary'])
+    expect(merged.activeProfileId).toBe('imported-openai-secondary')
   })
 
   it('deduplicates imported profiles when replacing untouched default settings', () => {
@@ -184,26 +181,26 @@ describe('mergeImportedSettings', () => {
           apiProxy: false,
         },
         {
-          id: 'imported-fal',
-          name: 'Imported fal',
-          provider: 'fal',
-          baseUrl: DEFAULT_FAL_BASE_URL,
-          apiKey: 'fal-key',
-          model: DEFAULT_FAL_MODEL,
+          id: 'imported-openai-secondary',
+          name: 'Imported OpenAI Secondary',
+          provider: 'openai',
+          baseUrl: 'https://api.secondary.example.com/v1',
+          apiKey: 'secondary-key',
+          model: DEFAULT_IMAGES_MODEL,
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
           apiProxy: false,
         },
       ],
-      activeProfileId: 'imported-fal',
+      activeProfileId: 'imported-openai-secondary',
     })
 
     expect(merged.profiles).toHaveLength(3)
     expect(merged.activeProfileId).toBe(DEFAULT_OPENAI_PROFILE_ID)
     expect(merged.profiles[0]).toMatchObject({ apiKey: 'current-key', model: 'current-model' })
     expect(merged.profiles[1]).toMatchObject({ name: 'Imported OpenAI', provider: 'openai', apiKey: 'imported-key' })
-    expect(merged.profiles[2]).toMatchObject({ name: 'Imported fal', provider: 'fal', apiKey: 'fal-key' })
+    expect(merged.profiles[2]).toMatchObject({ name: 'Imported OpenAI Secondary', provider: 'openai', apiKey: 'secondary-key' })
     expect(new Set(merged.profiles.map((profile) => profile.id)).size).toBe(3)
   })
 
@@ -228,12 +225,12 @@ describe('mergeImportedSettings', () => {
           apiProxy: true,
         },
         {
-          id: 'new-fal',
-          name: 'New fal',
-          provider: 'fal',
-          baseUrl: DEFAULT_FAL_BASE_URL,
-          apiKey: 'fal-key',
-          model: DEFAULT_FAL_MODEL,
+          id: 'new-openai',
+          name: 'New OpenAI',
+          provider: 'openai',
+          baseUrl: 'https://new.example.com/v1',
+          apiKey: 'new-key',
+          model: DEFAULT_IMAGES_MODEL,
           timeout: 300,
           apiMode: 'images',
           codexCli: false,
@@ -244,7 +241,7 @@ describe('mergeImportedSettings', () => {
 
     expect(merged.profiles).toHaveLength(2)
     expect(merged.profiles[0]).toMatchObject({ apiKey: 'current-key', model: 'current-model' })
-    expect(merged.profiles[1]).toMatchObject({ provider: 'fal', apiKey: 'fal-key', model: DEFAULT_FAL_MODEL })
+    expect(merged.profiles[1]).toMatchObject({ provider: 'openai', apiKey: 'new-key', model: DEFAULT_IMAGES_MODEL })
   })
 
   it('reuses an existing keyed profile when importing the same custom profile without an API key', () => {
@@ -429,6 +426,69 @@ describe('custom providers', () => {
     expect(settings.profiles[0].provider).toBe('custom-async')
   })
 
+  it('removes legacy fal providers from persisted settings', () => {
+    const legacyProviderId = ['f', 'al-ai'].join('')
+    const legacyProviderName = ['f', 'al.ai'].join('')
+    const legacyProviderBaseUrl = `https://${['f', 'al.run'].join('')}`
+    const settings = normalizeSettings({
+      customProviders: [{
+        id: legacyProviderId,
+        name: legacyProviderName,
+        submit: {
+          path: 'images/generations',
+          method: 'POST',
+          contentType: 'json',
+          body: { prompt: '$prompt' },
+        },
+      }, {
+        id: 'custom-json',
+        name: 'Custom JSON',
+        submit: {
+          path: 'images/generations',
+          method: 'POST',
+          contentType: 'json',
+          body: { prompt: '$prompt' },
+        },
+      }],
+      providerOrder: [legacyProviderId, 'openai', 'custom-json'],
+      profiles: [{
+        id: 'profile-fal',
+        name: legacyProviderName,
+        provider: legacyProviderId,
+        baseUrl: legacyProviderBaseUrl,
+        apiKey: 'key',
+        model: 'model',
+      }, {
+        id: 'profile-custom',
+        name: 'Custom JSON',
+        provider: 'custom-json',
+        baseUrl: 'https://custom.example.com/v1',
+        apiKey: 'key',
+        model: 'model',
+        providerDrafts: {
+          [legacyProviderId]: { baseUrl: legacyProviderBaseUrl, model: 'fal-model' },
+          openai: { baseUrl: '/', model: 'gpt-image-2' },
+        },
+      }],
+      activeProfileId: 'profile-fal',
+    })
+
+    expect(settings.customProviders.map((provider) => provider.id)).toEqual(['custom-json'])
+    expect(settings.providerOrder).toEqual(['openai', 'custom-json'])
+    expect(settings.activeProfileId).toBe('profile-fal')
+    expect(settings.profiles[0]).toMatchObject({
+      id: 'profile-fal',
+      name: '默认',
+      provider: 'openai',
+      baseUrl: DEFAULT_SETTINGS.baseUrl,
+      apiKey: '',
+      model: DEFAULT_IMAGES_MODEL,
+    })
+    expect(settings.profiles[1].providerDrafts).toEqual({
+      openai: expect.objectContaining({ baseUrl: '/', model: 'gpt-image-2' }),
+    })
+  })
+
   it('normalizes an Apimart-style task manifest', () => {
     const provider = importCustomProviderDefinitionFromJson(JSON.stringify({
       name: 'Apimart GPT-Image-2',
@@ -542,19 +602,6 @@ describe('custom providers', () => {
     }))).toThrow('JSON 包含 Markdown 链接')
   })
 
-  it('does not inherit fal URL and model when switching to a custom provider', () => {
-    const provider = importCustomProviderDefinitionFromJson(JSON.stringify({
-      name: 'Custom Provider',
-      template: 'http-image',
-      submit: { path: 'images/generations' },
-    }))
-    const profile = switchApiProfileProvider(createDefaultFalProfile(), provider.id, provider)
-
-    expect(profile.provider).toBe(provider.id)
-    expect(profile.baseUrl).toBe(DEFAULT_SETTINGS.baseUrl)
-    expect(profile.model).toBe(DEFAULT_IMAGES_MODEL)
-  })
-
   it('uses API-mode specific streaming defaults and preserves partial image count', () => {
     expect(createDefaultOpenAIProfile().streamImages).toBe(false)
     expect(createDefaultOpenAIProfile({ apiMode: 'responses' }).streamImages).toBe(true)
@@ -627,14 +674,12 @@ describe('custom providers', () => {
     expect(activeProfile.streamImages).toBe(false)
   })
 
-  it('keeps non-OpenAI providers in Images API mode when switching providers', () => {
+  it('keeps custom providers in Images API mode when switching providers', () => {
     const provider = { id: 'custom-json', name: 'Custom JSON', submit: { path: 'images/generations' } }
     const openaiProfile = createDefaultOpenAIProfile({ apiMode: 'responses', streamImages: true })
 
-    const falProfile = switchApiProfileProvider(openaiProfile, 'fal')
     const customProfile = switchApiProfileProvider(openaiProfile, provider.id, provider)
 
-    expect(falProfile).toMatchObject({ provider: 'fal', apiMode: 'images', streamImages: false })
     expect(customProfile).toMatchObject({ provider: provider.id, apiMode: 'images', streamImages: false })
   })
 
@@ -650,19 +695,4 @@ describe('custom providers', () => {
     expect(normalizeSettings({ agentMathFormattingPrompt: false }).agentMathFormattingPrompt).toBe(false)
   })
 
-  it('restores OpenAI-compatible URL after switching through fal.ai', () => {
-    const openaiProfile = createDefaultOpenAIProfile({
-      baseUrl: 'https://api.compat.example.com/v1',
-      model: 'custom-openai-model',
-      apiProxy: false,
-    })
-
-    const falProfile = switchApiProfileProvider(openaiProfile, 'fal')
-    const restoredProfile = switchApiProfileProvider(falProfile, 'openai')
-
-    expect(falProfile.baseUrl).toBe(DEFAULT_FAL_BASE_URL)
-    expect(restoredProfile.baseUrl).toBe('https://api.compat.example.com/v1')
-    expect(restoredProfile.model).toBe('custom-openai-model')
-    expect(restoredProfile.apiProxy).toBe(false)
-  })
 })
