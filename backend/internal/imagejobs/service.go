@@ -3,6 +3,8 @@ package imagejobs
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -123,6 +125,7 @@ func (s *Service) Ack(ctx context.Context, id string) error {
 
 func (s *Service) Run(ctx context.Context, jobID string) {
 	if err := s.run(ctx, jobID); err != nil {
+		log.Printf("image job %s failed: %v", jobID, err)
 		_ = s.repo.MarkError(context.Background(), jobID, apperror.Normalize(err))
 	}
 }
@@ -184,6 +187,9 @@ func (s *Service) loadAPIKey(ctx context.Context, jobID string) (string, error) 
 }
 
 func (s *Service) callUpstream(ctx context.Context, job Job, apiKey string) (map[string]any, error) {
+	if job.APIMode == "responses" {
+		return s.callResponses(ctx, job, apiKey)
+	}
 	if len(job.InputAssetIDs) > 0 {
 		return s.callImageEdit(ctx, job, apiKey)
 	}
@@ -200,21 +206,78 @@ func (s *Service) callUpstream(ctx context.Context, job Job, apiKey string) (map
 	if job.Params.OutputCompression != nil {
 		body["output_compression"] = *job.Params.OutputCompression
 	}
-	if job.APIMode == "responses" {
-		return s.sub2api.Responses(ctx, apiKey, map[string]any{
-			"model": job.Model,
-			"input": job.Prompt,
-			"tools": []map[string]any{{
-				"type":          "image_generation",
-				"size":          job.Params.Size,
-				"quality":       job.Params.Quality,
-				"output_format": job.Params.OutputFormat,
-				"moderation":    job.Params.Moderation,
-			}},
-			"tool_choice": "required",
+	return s.sub2api.ImagesGeneration(ctx, apiKey, body)
+}
+
+func (s *Service) callResponses(ctx context.Context, job Job, apiKey string) (map[string]any, error) {
+	input, err := s.responsesInput(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	tool := map[string]any{
+		"type":          "image_generation",
+		"action":        "generate",
+		"size":          job.Params.Size,
+		"quality":       job.Params.Quality,
+		"output_format": job.Params.OutputFormat,
+		"moderation":    job.Params.Moderation,
+	}
+	if len(job.InputAssetIDs) > 0 {
+		tool["action"] = "edit"
+	}
+	if job.Params.OutputCompression != nil && job.Params.OutputFormat != "png" {
+		tool["output_compression"] = *job.Params.OutputCompression
+	}
+	if job.MaskAssetID != nil {
+		maskURL, err := s.assetDataURL(ctx, *job.MaskAssetID)
+		if err != nil {
+			return nil, err
+		}
+		tool["input_image_mask"] = map[string]any{"image_url": maskURL}
+	}
+	return s.sub2api.Responses(ctx, apiKey, map[string]any{
+		"model":       job.Model,
+		"input":       input,
+		"tools":       []map[string]any{tool},
+		"tool_choice": "required",
+	})
+}
+
+func (s *Service) responsesInput(ctx context.Context, job Job) (any, error) {
+	if len(job.InputAssetIDs) == 0 {
+		return job.Prompt, nil
+	}
+	content := []map[string]any{{"type": "input_text", "text": job.Prompt}}
+	for _, assetID := range job.InputAssetIDs {
+		dataURL, err := s.assetDataURL(ctx, assetID)
+		if err != nil {
+			return nil, err
+		}
+		content = append(content, map[string]any{
+			"type":      "input_image",
+			"image_url": dataURL,
 		})
 	}
-	return s.sub2api.ImagesGeneration(ctx, apiKey, body)
+	return []map[string]any{{
+		"role":    "user",
+		"content": content,
+	}}, nil
+}
+
+func (s *Service) assetDataURL(ctx context.Context, assetID string) (string, error) {
+	asset, err := s.assets.Get(ctx, assetID)
+	if err != nil {
+		return "", err
+	}
+	_, data, err := s.assets.Data(ctx, asset.ID)
+	if err != nil {
+		return "", err
+	}
+	mime := strings.TrimSpace(strings.Split(asset.MIME, ";")[0])
+	if mime == "" {
+		mime = "image/png"
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 func (s *Service) callImageEdit(ctx context.Context, job Job, apiKey string) (map[string]any, error) {
