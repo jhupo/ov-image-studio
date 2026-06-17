@@ -1,5 +1,6 @@
-import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
+import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { appendStreamingFormatHint, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
+import { callImageJobApi } from './imageJobsApi'
 
 export const AGENT_USER_STOP_REASON = 'agent_user_stop'
 
@@ -45,11 +46,31 @@ interface AgentRunView {
     id: string
     status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
     response?: ResponsesApiResponse
-    error?: { message?: string; code?: string; category?: string; retryable?: boolean }
+    error?: { message?: string; code?: string; category?: string; retryable?: boolean; upstreamStatusCode?: number; raw?: unknown }
   }
 }
 
 const AGENT_POLL_INTERVAL_MS = 1500
+
+class AgentRunError extends Error {
+  rawResponsePayload?: string
+
+  constructor(message: string, rawResponsePayload?: string) {
+    super(message)
+    this.name = 'AgentRunError'
+    this.rawResponsePayload = rawResponsePayload
+  }
+}
+
+function createAgentRunError(error: AgentRunView['run']['error']) {
+  return new AgentRunError(error?.message || 'Agent run failed', error ? JSON.stringify(error, null, 2) : undefined)
+}
+
+function getRawErrorPayload(err: unknown) {
+  return err instanceof Error && 'rawResponsePayload' in err
+    ? (err as { rawResponsePayload?: string }).rawResponsePayload
+    : undefined
+}
 
 async function createAgentRun(profile: ApiProfile, request: Record<string, unknown>, signal?: AbortSignal) {
   const response = await fetch('/api/agent/runs', {
@@ -103,7 +124,7 @@ async function runAgentResponses(profile: ApiProfile, body: Record<string, unkno
       const status = view.run.status
       if (status === 'queued' || status === 'running') continue
       if (status === 'cancelled') throw new DOMException('Aborted', 'AbortError')
-      if (status === 'error') throw new Error(view.run.error?.message || 'Agent run failed')
+      if (status === 'error') throw createAgentRunError(view.run.error)
       if (!view.run.response) throw new Error('Agent run completed without response data')
       return view.run.response
     }
@@ -129,6 +150,7 @@ export interface AgentApiResult {
   responseId?: string
   text: string
   images: AgentApiResultImage[]
+  imageFailures?: AgentApiImageToolFailure[]
   outputItems: ResponsesApiResponse['output']
   rawResponsePayload?: string
 }
@@ -142,10 +164,11 @@ const AGENT_IMAGE_INSTRUCTIONS = [
   '  2. **Batch Remaining Tasks:** Once the base reference is available, list all remaining images to be generated. The app will generate them concurrently for you. In your descriptions, explicitly instruct to reference the base image to maintain consistency.',
   '  3. **Independent Images:** If the requested images are completely independent (e.g. "3 different cats"), generate them together in ONE response. Do NOT generate them one by one across multiple responses.',
   'As the turn continues, output a brief progress note before each tool call.',
-  'For single-image requests, generate directly without any listing.',
+  'For every requested image, call generate_image_batch. Use one item when the user asks for a single image.',
   '',
   '## Generating images',
-  '- One image_generation call per distinct image. Never collage.',
+  '- Use generate_image_batch for all image generation and image editing. Never use any built-in image_generation tool.',
+  '- One batch item per distinct image. Never collage.',
   '- Dependent images (a later image needs to reference an earlier one) → generate the prerequisite first, then call continue_generation. The next round will have the result available as `<ref id="..." />`.',
   '- Only generate when explicitly requested; otherwise reply with text.',
   '- Preserve the user\'s original intent faithfully. Never substitute requested subjects for copyright/trademark reasons.',
@@ -156,7 +179,7 @@ const AGENT_IMAGE_INSTRUCTIONS = [
   '- Deleted images appear as `<removed_ref id="..." />` without an accompanying image — do not reference them.',
   '- In user messages: `<ref id="..." />` may also point to user-attached/cited images.',
   '- In generate_image_batch tool arguments, include matching `<ref id="..." />` tags inside each image prompt when the prompt refers to a reference image. Do not use separate bare reference ids.',
-  'Resolve user mentions ("the first image") to the matching id. Only use existing ids in image_generation prompts and generate_image_batch prompts.',
+  'Resolve user mentions ("the first image") to the matching id. Only use existing ids in generate_image_batch prompts.',
 ].join('\n')
 
 const AGENT_MATH_FORMATTING_INSTRUCTIONS = [
@@ -203,46 +226,13 @@ function createHeaders(profile: ApiProfile): Record<string, string> {
   }
 }
 
-function createImageTool(params: TaskParams, profile: ApiProfile, maskDataUrl?: string): Record<string, unknown> {
-  const tool: Record<string, unknown> = {
-    type: 'image_generation',
-    action: 'auto',
-    size: params.size,
-    output_format: params.output_format,
-    moderation: params.moderation,
-  }
-
-  tool.quality = params.quality
-
-  if (params.output_format !== 'png' && params.output_compression != null) {
-    tool.output_compression = params.output_compression
-  }
-
-  if (profile.streamImages) {
-    tool.partial_images = profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
-  }
-
-  if (maskDataUrl) {
-    tool.input_image_mask = {
-      image_url: maskDataUrl,
-    }
-  }
-
-  return tool
-}
-
-function createAgentTools(params: TaskParams, profile: ApiProfile, settings: AppSettings, maskDataUrl?: string): Array<Record<string, unknown>> {
-  const tools: Array<Record<string, unknown>> = [createImageTool(params, profile, maskDataUrl)]
-
-  // generate_image_batch: custom function tool for concurrent multi-image generation
-  tools.push({
+function createAgentTools(settings: AppSettings): Array<Record<string, unknown>> {
+  const tools: Array<Record<string, unknown>> = [{
     type: 'function',
     name: 'generate_image_batch',
     description: [
-      'Generate multiple images concurrently. Use this ONLY when:',
-      '1. There are 2+ remaining images whose prerequisites (base references) are ALL already generated.',
-      '2. These images are independent of each other (none references another image in this same batch).',
-      'For single images or prerequisite/base images, use the built-in image_generation tool instead.',
+      'Generate or edit one or more images through the app backend. Use this for every image request, including single images.',
+      'Batch images only when their prerequisites are already available and none depends on another image in the same batch.',
       'Each image prompt must be self-contained and include full visual style descriptions.',
       'If an image needs to match a previously generated image, include the corresponding XML tag (e.g. <ref id="round-1-image-1" />) inside that image prompt so the app can attach the reference image automatically.',
     ].join(' '),
@@ -273,7 +263,7 @@ function createAgentTools(params: TaskParams, profile: ApiProfile, settings: App
       additionalProperties: false,
     },
     strict: true,
-  })
+  }]
 
   // continue_generation: model calls this to request another round (e.g. after generating a prerequisite image)
   tools.push({
@@ -567,6 +557,21 @@ function extractImages(payload: ResponsesApiResponse, fallbackMime: string): Age
   return images
 }
 
+function extractImageFailures(payload: ResponsesApiResponse): AgentApiImageToolFailure[] {
+  const failures: AgentApiImageToolFailure[] = []
+  for (const item of payload.output ?? []) {
+    if (item.type !== 'image_generation_call' || item.status !== 'failed') continue
+    const toolCallId = typeof item.id === 'string' && item.id ? item.id : ''
+    if (!toolCallId) continue
+    const itemRecord = item as Record<string, unknown>
+    failures.push({
+      toolCallId,
+      error: getErrorMessageFromValue(itemRecord.error) ?? '内置 image_generation 工具调用失败',
+    })
+  }
+  return failures
+}
+
 function extractImageFromOutputItem(item: ResponsesOutputItem, fallbackMime: string): AgentApiResultImage | null {
   if (item.type !== 'image_generation_call') return null
 
@@ -752,6 +757,7 @@ async function parseAgentStreamResponse(
     responseId: payload.id,
     text,
     images: extractImages(payload, mime),
+    imageFailures: extractImageFailures(payload),
     outputItems: payload.output ?? [],
     rawResponsePayload: JSON.stringify(payload, null, 2),
   }
@@ -771,7 +777,7 @@ export async function callAgentResponsesApi(opts: {
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
   onImageToolFailed?: (event: AgentApiImageToolFailure) => void | Promise<void>
 }): Promise<AgentApiResult> {
-  const { settings, profile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImageToolCompleted } = opts
+  const { settings, profile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImageToolCompleted, onImageToolFailed } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const controller = new AbortController()
   const timeoutId = setTimeout(() => abortController(controller, createAgentTimeoutError(profile.timeout)), profile.timeout * 1000)
@@ -784,19 +790,19 @@ export async function callAgentResponsesApi(opts: {
       model: profile.model || settings.model,
       instructions: createAgentInstructions(settings),
       input,
-      tools: createAgentTools(params, profile, settings, maskDataUrl),
+      tools: createAgentTools(settings),
     }
-    if (profile.streamImages) body.stream = true
-
     const payload = await runAgentResponses(profile, body, controller.signal)
     throwIfAborted(controller.signal, signal)
     const images = extractImages(payload, mime)
+    const imageFailures = extractImageFailures(payload)
     for (const item of payload.output ?? []) {
       if (item.type === 'image_generation_call' && typeof item.id === 'string') {
         await onImageToolStarted?.({ toolCallId: item.id })
       }
     }
     for (const image of images) await onImageToolCompleted?.(image)
+    for (const failure of imageFailures) await onImageToolFailed?.(failure)
     const text = extractText(payload)
     if (text) onTextDelta?.(text)
     onOutputItems?.(payload.output ?? [])
@@ -804,6 +810,7 @@ export async function callAgentResponsesApi(opts: {
       responseId: payload.id,
       text,
       images,
+      imageFailures,
       outputItems: payload.output ?? [],
       rawResponsePayload: JSON.stringify(payload, null, 2),
     }
@@ -852,6 +859,7 @@ export interface BatchImageCallResult {
   image: AgentApiResultImage | null
   error: string | null
   rawResponsePayload?: string
+  cleanup?: () => Promise<void>
 }
 
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
@@ -867,12 +875,13 @@ export async function callBatchImageSingle(opts: {
   prompt: string
   referenceImageDataUrls: string[]
   referenceIds?: string[]
+  maskDataUrl?: string
   signal?: AbortSignal
   onImageToolStarted?: () => void | Promise<void>
   onPartialImage?: (event: { image: string; partialImageIndex?: number }) => void | Promise<void>
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
 }): Promise<BatchImageCallResult> {
-  const { profile, params, batchItemId, prompt, referenceImageDataUrls, referenceIds, signal, onImageToolStarted, onImageToolCompleted } = opts
+  const { profile, params, batchItemId, prompt, referenceImageDataUrls, referenceIds, maskDataUrl, signal, onImageToolStarted, onImageToolCompleted } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const controller = new AbortController()
   const timeoutId = setTimeout(() => abortController(controller, createAgentTimeoutError(profile.timeout)), profile.timeout * 1000)
@@ -885,61 +894,41 @@ export async function callBatchImageSingle(opts: {
       ? `Attached reference images correspond to these ids, in order: ${(referenceIds ?? []).map((id) => `<ref id="${id}" />`).join(', ') || 'reference images'}.`
       : ''
     const guardedPrompt = [referenceMapping, `${PROMPT_REWRITE_GUARD_PREFIX}\n${prompt}`].filter(Boolean).join('\n\n')
-    const input: unknown = referenceImageDataUrls.length > 0
-      ? [{
-          role: 'user',
-          content: [
-            { type: 'input_text', text: guardedPrompt },
-            ...referenceImageDataUrls.map((dataUrl) => ({
-              type: 'input_image',
-              image_url: dataUrl,
-            })),
-          ],
-        }]
-      : guardedPrompt
-
-    const tool: Record<string, unknown> = {
-      type: 'image_generation',
-      action: referenceImageDataUrls.length > 0 ? 'auto' : 'generate',
-      size: params.size,
-      output_format: params.output_format,
-      moderation: params.moderation,
-      quality: params.quality,
-    }
-    if (params.output_format !== 'png' && params.output_compression != null) {
-      tool.output_compression = params.output_compression
-    }
-    if (profile.streamImages) {
-      tool.partial_images = profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
-    }
-
-    const body: Record<string, unknown> = {
-      model: profile.model,
-      input,
-      tools: [tool],
-      tool_choice: 'required',
-    }
-    if (profile.streamImages) body.stream = true
-
-    const payload = await runAgentResponses(profile, body, controller.signal)
-    const images = extractImages(payload, mime)
-    const image = images[0] ?? null
-    if (image?.toolCallId) await onImageToolStarted?.()
+    await onImageToolStarted?.()
+    const result = await callImageJobApi({
+      profile,
+      prompt: guardedPrompt,
+      params: { ...params, n: 1 },
+      inputImageDataUrls: referenceImageDataUrls,
+      maskDataUrl,
+      signal: controller.signal,
+    })
+    const dataUrl = result.images[0]
+    const actualParams = result.actualParamsList?.[0] ?? result.actualParams
+    const image = dataUrl
+      ? {
+          toolCallId: batchItemId,
+          action: referenceImageDataUrls.length > 0 || maskDataUrl ? 'edit' : 'generate',
+          dataUrl,
+          actualParams: actualParams ? { ...actualParams, n: 1 } : { n: 1 },
+          revisedPrompt: result.revisedPrompts?.[0],
+        }
+      : null
     if (image) await onImageToolCompleted?.(image)
     return {
       batchItemId,
       image,
       error: image ? null : 'Image data was not returned',
-      rawResponsePayload: JSON.stringify(payload, null, 2),
+      cleanup: result.cleanup,
     }
   } catch (err) {
     if (signal?.aborted) {
-      return { batchItemId, image: null, error: signal.reason instanceof Error ? signal.reason.message : 'Request was cancelled' }
+      return { batchItemId, image: null, error: signal.reason instanceof Error ? signal.reason.message : 'Request was cancelled', rawResponsePayload: getRawErrorPayload(err) }
     }
     if (controller.signal.aborted) {
-      return { batchItemId, image: null, error: controller.signal.reason instanceof Error ? controller.signal.reason.message : 'Request was cancelled' }
+      return { batchItemId, image: null, error: controller.signal.reason instanceof Error ? controller.signal.reason.message : 'Request was cancelled', rawResponsePayload: getRawErrorPayload(err) }
     }
-    return { batchItemId, image: null, error: err instanceof Error ? err.message : String(err) }
+    return { batchItemId, image: null, error: err instanceof Error ? err.message : String(err), rawResponsePayload: getRawErrorPayload(err) }
   } finally {
     clearTimeout(timeoutId)
     signal?.removeEventListener('abort', abortFromCaller)

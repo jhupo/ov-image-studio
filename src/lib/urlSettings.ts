@@ -8,21 +8,16 @@ import {
   isDefaultConfigOnlyEnabled,
   mergeImportedSettings,
   normalizeSettings,
-  normalizeStreamPartialImages,
 } from './apiProfiles'
 
-const URL_SETTING_KEYS = ['settings', 'apiUrl', 'apiKey', 'codexCli', 'apiMode', 'model', 'profileName', 'streamImages', 'streamPartialImages']
+const URL_SETTING_KEYS = ['settings', 'apiKey', 'apiMode', 'model', 'profileName']
 
-function getProfileDedupKey(profile: Pick<AppSettings['profiles'][number], 'provider' | 'baseUrl' | 'apiKey' | 'model' | 'apiMode' | 'codexCli' | 'streamImages' | 'streamPartialImages'>) {
+function getProfileDedupKey(profile: Pick<AppSettings['profiles'][number], 'provider' | 'apiKey' | 'model' | 'apiMode'>) {
   return JSON.stringify([
     profile.provider,
-    profile.baseUrl.trim().replace(/\/+$/, '').toLowerCase(),
     profile.apiKey.trim(),
     profile.model.trim(),
     profile.apiMode,
-    profile.codexCli === true,
-    profile.streamImages === true,
-    profile.streamPartialImages ?? 0,
   ])
 }
 
@@ -100,40 +95,26 @@ function buildDefaultConfigOnlySettingsFromUrlParams(currentSettings: Partial<Ap
       }) as Record<string, unknown> | undefined
       if (matched) {
         if (typeof matched.name === 'string' && matched.name.trim()) patch.name = matched.name.trim()
-        if (typeof matched.baseUrl === 'string') patch.baseUrl = matched.baseUrl
         if (typeof matched.apiKey === 'string') patch.apiKey = matched.apiKey
         if (typeof matched.model === 'string' && matched.model.trim()) patch.model = matched.model.trim()
         if (typeof matched.timeout === 'number' && Number.isFinite(matched.timeout)) patch.timeout = matched.timeout
-        if (typeof matched.apiProxy === 'boolean') patch.apiProxy = matched.apiProxy
-        if (matched.responseFormatB64Json === true) patch.responseFormatB64Json = true
         if (isOpenAI) {
           if (matched.apiMode === 'images' || matched.apiMode === 'responses') patch.apiMode = matched.apiMode
-          if (typeof matched.codexCli === 'boolean') patch.codexCli = matched.codexCli
-          if (typeof matched.streamImages === 'boolean') patch.streamImages = matched.streamImages
-          if (matched.streamPartialImages !== undefined) patch.streamPartialImages = normalizeStreamPartialImages(matched.streamPartialImages)
         }
       }
     }
   }
 
   // 查询参数覆盖（优先级高于 settings JSON）
-  const apiUrlParam = searchParams.get('apiUrl')
   const apiKeyParam = searchParams.get('apiKey')
   const modelParam = searchParams.get('model')
   const profileNameParam = searchParams.get('profileName')
   if (profileNameParam?.trim()) patch.name = profileNameParam.trim()
-  if (apiUrlParam !== null) patch.baseUrl = normalizeBaseUrl(apiUrlParam.trim())
   if (apiKeyParam !== null) patch.apiKey = apiKeyParam.trim()
   if (modelParam !== null && modelParam.trim()) patch.model = modelParam.trim()
   if (isOpenAI) {
     const apiModeParam = searchParams.get('apiMode')
-    const codexCliParam = searchParams.get('codexCli')
-    const streamImagesParam = searchParams.get('streamImages')
-    const streamPartialImagesParam = searchParams.get('streamPartialImages')
     if (apiModeParam === 'images' || apiModeParam === 'responses') patch.apiMode = apiModeParam
-    if (codexCliParam !== null) patch.codexCli = codexCliParam.trim().toLowerCase() === 'true'
-    if (streamImagesParam !== null) patch.streamImages = streamImagesParam.trim().toLowerCase() === 'true'
-    if (streamPartialImagesParam !== null) patch.streamPartialImages = normalizeStreamPartialImages(streamPartialImagesParam)
   }
 
   if (Object.keys(patch).length === 0) return {}
@@ -158,23 +139,19 @@ export function buildSettingsFromUrlParams(currentSettings: Partial<AppSettings>
   if (isDefaultConfigOnlyEnabled()) return buildDefaultConfigOnlySettingsFromUrlParams(currentSettings, searchParams)
 
   const importedSettings = getUrlSettingsPayload(searchParams)
-  const apiUrlParam = searchParams.get('apiUrl')
   const apiKeyParam = searchParams.get('apiKey')
-  const codexCliParam = searchParams.get('codexCli')
   const apiModeParam = searchParams.get('apiMode')
   const modelParam = searchParams.get('model')
   const profileNameParam = searchParams.get('profileName')
   const profileName = profileNameParam?.trim() ?? ''
-  const streamImagesParam = searchParams.get('streamImages')
-  const streamPartialImagesParam = searchParams.get('streamPartialImages')
   const apiMode: ApiMode | undefined = apiModeParam === 'images' || apiModeParam === 'responses' ? apiModeParam : undefined
 
-  const hasLegacyOpenAIParams = apiUrlParam !== null || apiKeyParam !== null || codexCliParam !== null || apiMode !== undefined || modelParam !== null || profileNameParam !== null || streamImagesParam !== null || streamPartialImagesParam !== null
+  const hasOpenAIParams = apiKeyParam !== null || apiMode !== undefined || modelParam !== null || profileNameParam !== null
   const settings = importedSettings == null
     ? normalizeSettings(currentSettings)
     : activateFirstImportedProfile(mergeImportedSettings(currentSettings, importedSettings), importedSettings)
 
-  if (hasLegacyOpenAIParams) {
+  if (hasOpenAIParams) {
     const profileApiMode = apiMode ?? 'images'
     const profile = createDefaultOpenAIProfile({
       id: createUrlProfileId(new Set(settings.profiles.map((item) => item.id))),
@@ -182,13 +159,9 @@ export function buildSettingsFromUrlParams(currentSettings: Partial<AppSettings>
       apiMode: profileApiMode,
       model: profileApiMode === 'responses' ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL,
     })
-    if (apiUrlParam !== null) profile.baseUrl = normalizeBaseUrl(apiUrlParam.trim())
     if (apiKeyParam !== null) profile.apiKey = apiKeyParam.trim()
     if (modelParam !== null && modelParam.trim()) profile.model = modelParam.trim()
     if (profileName) profile.name = profileName
-    if (codexCliParam !== null) profile.codexCli = codexCliParam.trim().toLowerCase() === 'true'
-    if (streamImagesParam !== null) profile.streamImages = streamImagesParam.trim().toLowerCase() === 'true'
-    if (streamPartialImagesParam !== null) profile.streamPartialImages = normalizeStreamPartialImages(streamPartialImagesParam)
 
     const existingProfile = settings.profiles.find((item) =>
       getProfileDedupKey(item) === getProfileDedupKey(profile) &&

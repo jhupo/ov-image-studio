@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -24,7 +24,6 @@ export default function DetailModal() {
   const showToast = useStore((s) => s.showToast)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const settings = useStore((s) => s.settings)
-  const dismissedCodexCliPrompts = useStore((s) => s.dismissedCodexCliPrompts)
   const streamPreviewSrc = useStore((s) => detailTaskId ? s.streamPreviews[detailTaskId] || '' : '')
   const streamPreviewSlots = useStore((s) => detailTaskId ? s.streamPreviewSlots[detailTaskId] : undefined)
 
@@ -246,12 +245,6 @@ export default function DetailModal() {
     : task.prompt
   const promptSentToApi = replaceImageMentionsForApi(requestPrompt, task.inputImageIds.length).trim()
   const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== promptSentToApi)
-  const codexCliPromptKey = getCodexCliPromptKey(settings)
-  const hasHandledPromptWarning = settings.codexCli || dismissedCodexCliPrompts.includes(codexCliPromptKey)
-  const taskProvider = task.apiProvider
-  const isOpenAiTask = (taskProvider ?? 'openai') === 'openai'
-  const showPromptWarning = Boolean(isOpenAiTask && task.apiMode === 'responses' && currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt) && !hasHandledPromptWarning)
-  const taskProviderName = taskProvider === 'openai' ? 'OpenAI' : taskProvider ? '自定义接口' : '未知'
   const taskProfileName = task.apiProfileName || '未知'
   const taskModel = task.apiModel || '未知'
   const showSourceInfo = Boolean(task.apiProvider || task.apiProfileName || task.apiModel)
@@ -325,13 +318,6 @@ export default function DetailModal() {
     } catch (err) {
       showToast(getClipboardFailureMessage('复制提示词失败', err), 'error')
     }
-  }
-
-  const handleShowPromptWarning = () => {
-    showCodexCliPrompt(
-      true,
-      currentRevisedPrompt ? '接口返回的提示词已被改写' : '接口没有返回官方 API 会返回的部分信息',
-    )
   }
 
   const handleCopyInputImage = async () => {
@@ -660,7 +646,7 @@ export default function DetailModal() {
                   )}
                   {streamPreviewLoaded && (
                     <span className="absolute top-4 right-4 flex items-center gap-1 rounded bg-blue-500 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-                      流式预览
+                      处理中预览
                     </span>
                   )}
                   {streamPreviewLen > 1 && (
@@ -795,12 +781,12 @@ export default function DetailModal() {
                         void handleDownloadPartialImages()
                       }}
                       className="inline-flex items-center justify-center rounded-full border border-amber-200/80 bg-amber-50 px-3 py-1.5 text-amber-600 transition hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20"
-                      aria-label="下载中间步骤图"
+                      aria-label="下载过程图"
                     >
                       <DownloadIcon className="h-4 w-4" />
                     </button>
                     <ViewportTooltip visible={downloadPartialImagesTooltip.visible} className="whitespace-nowrap">
-                      下载中间步骤图
+                      下载过程图
                     </ViewportTooltip>
                   </div>
                 )}
@@ -851,20 +837,6 @@ export default function DetailModal() {
                 >
                   <CopyIcon className="h-4 w-4" />
                 </button>
-              )}
-              {showPromptWarning && (
-                <span className="relative inline-flex">
-                  <button
-                    type="button"
-                    className="p-1 rounded text-amber-500 hover:bg-amber-50 dark:text-yellow-300 dark:hover:bg-yellow-500/10 transition"
-                    onClick={handleShowPromptWarning}
-                    aria-label="提示词已被改写"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                    </svg>
-                  </button>
-                </span>
               )}
             </div>
             {showPendingPrompt ? (
@@ -957,7 +929,7 @@ export default function DetailModal() {
               <div className="mb-2 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
                 <span className="text-gray-400 dark:text-gray-500">来源</span>
                 <br />
-                <span className="font-medium text-gray-700 dark:text-gray-200">{taskProviderName}</span>
+                <span className="font-medium text-gray-700 dark:text-gray-200">后端任务</span>
                 <span className="text-gray-400 dark:text-gray-500"> · {taskProfileName} · {taskModel}</span>
               </div>
             )}

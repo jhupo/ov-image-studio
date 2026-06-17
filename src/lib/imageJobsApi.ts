@@ -1,6 +1,7 @@
 import type { ApiProfile, TaskParams } from '../types'
 import type { CallApiResult } from './imageApiShared'
-import { getApiErrorMessage, MIME_MAP } from './imageApiShared'
+import { getApiErrorMessage } from './imageApiShared'
+import { imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 
 interface ImageJobAsset {
   id: string
@@ -30,6 +31,16 @@ interface ImageJobView {
 }
 
 const POLL_INTERVAL_MS = 1500
+
+class ImageJobError extends Error {
+  rawResponsePayload?: string
+
+  constructor(message: string, rawResponsePayload?: string) {
+    super(message)
+    this.name = 'ImageJobError'
+    this.rawResponsePayload = rawResponsePayload
+  }
+}
 
 function sleep(ms: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
@@ -78,6 +89,10 @@ async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> 
   return `data:${blob.type || fallbackMime};base64,${btoa(binary)}`
 }
 
+async function pngBlobToDataUrl(blob: Blob): Promise<string> {
+  return blobToDataUrl(blob, 'image/png')
+}
+
 async function uploadAsset(kind: 'input' | 'mask', dataUrl: string, signal?: AbortSignal): Promise<string> {
   const response = await fetch('/api/assets', {
     method: 'POST',
@@ -108,12 +123,26 @@ async function getJob(jobId: string, signal?: AbortSignal): Promise<ImageJobView
 
 async function ackJob(jobId: string) {
   try {
-    await fetch(`/api/image/jobs/${encodeURIComponent(jobId)}/ack`, {
+    const response = await fetch(`/api/image/jobs/${encodeURIComponent(jobId)}/ack`, {
+      method: 'POST',
+      cache: 'no-store',
+    })
+    if (!response.ok) {
+      console.warn(await readError(response, `ACK failed: HTTP ${response.status}`))
+    }
+  } catch {
+    // Temporary assets also have TTL; ACK failures should not break saved local images.
+  }
+}
+
+export async function cancelImageJob(jobId: string) {
+  try {
+    await fetch(`/api/image/jobs/${encodeURIComponent(jobId)}/cancel`, {
       method: 'POST',
       cache: 'no-store',
     })
   } catch {
-    // 临时资产有 TTL，ACK 失败不影响前端已缓存图片。
+    // Backend cancellation is best effort; the local task may already be gone.
   }
 }
 
@@ -126,6 +155,15 @@ async function downloadAsset(asset: ImageJobAsset, signal?: AbortSignal) {
   return blobToDataUrl(await response.blob(), asset.mime || 'image/png')
 }
 
+function createRawJobErrorPayload(error: ImageJobView['job']['error']) {
+  if (!error) return undefined
+  return JSON.stringify(error, null, 2)
+}
+
+function createJobError(error: ImageJobView['job']['error']) {
+  return new ImageJobError(error?.message || '任务执行失败', createRawJobErrorPayload(error))
+}
+
 export async function callImageJobApi(opts: {
   profile: ApiProfile
   prompt: string
@@ -133,12 +171,22 @@ export async function callImageJobApi(opts: {
   inputImageDataUrls: string[]
   maskDataUrl?: string
   signal?: AbortSignal
+  onJobCreated?: (jobId: string) => void
 }): Promise<CallApiResult> {
-  const inputAssetIds: string[] = []
-  for (const dataUrl of opts.inputImageDataUrls) {
-    inputAssetIds.push(await uploadAsset('input', dataUrl, opts.signal))
+  if (opts.maskDataUrl && opts.inputImageDataUrls.length === 0) {
+    throw new Error('遮罩编辑需要同时提供原图')
   }
-  const maskAssetId = opts.maskDataUrl ? await uploadAsset('mask', opts.maskDataUrl, opts.signal) : null
+  const inputAssetIds: string[] = []
+  for (let index = 0; index < opts.inputImageDataUrls.length; index += 1) {
+    const dataUrl = opts.inputImageDataUrls[index]
+    const uploadDataUrl = opts.maskDataUrl && index === 0
+      ? await pngBlobToDataUrl(await imageDataUrlToPngBlob(dataUrl))
+      : dataUrl
+    inputAssetIds.push(await uploadAsset('input', uploadDataUrl, opts.signal))
+  }
+  const maskAssetId = opts.maskDataUrl
+    ? await uploadAsset('mask', await pngBlobToDataUrl(await maskDataUrlToPngBlob(opts.maskDataUrl)), opts.signal)
+    : null
   const response = await fetch('/api/image/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -166,25 +214,35 @@ export async function callImageJobApi(opts: {
   const created = await response.json() as { job?: { id?: string } }
   const jobId = created.job?.id
   if (!jobId) throw new Error('创建任务后没有返回 job id')
+  opts.onJobCreated?.(jobId)
 
-  while (true) {
-    await sleep(POLL_INTERVAL_MS, opts.signal)
-    const view = await getJob(jobId, opts.signal)
-    if (view.job.status === 'queued' || view.job.status === 'running') continue
-    if (view.job.status === 'cancelled') throw new DOMException('Aborted', 'AbortError')
-    if (view.job.status === 'error') throw new Error(view.job.error?.message || '任务执行失败')
-    const assets = view.result?.assets ?? []
-    if (!assets.length) throw new Error('任务完成但没有返回图片')
-    const images = await Promise.all(assets.map((asset) => downloadAsset(asset, opts.signal)))
-    const actualParamsList = assets.map((asset) => asset.actualParams || view.job.actualParams)
-    return {
-      images,
-      cleanup: () => ackJob(jobId),
-      actualParams: {
-        ...(view.job.actualParams ?? actualParamsList[0] ?? {}),
-        n: images.length,
-      },
-      actualParamsList,
+  const cancelOnAbort = () => {
+    void cancelImageJob(jobId)
+  }
+  opts.signal?.addEventListener('abort', cancelOnAbort, { once: true })
+
+  try {
+    while (true) {
+      await sleep(POLL_INTERVAL_MS, opts.signal)
+      const view = await getJob(jobId, opts.signal)
+      if (view.job.status === 'queued' || view.job.status === 'running') continue
+      if (view.job.status === 'cancelled') throw new DOMException('Aborted', 'AbortError')
+      if (view.job.status === 'error') throw createJobError(view.job.error)
+      const assets = view.result?.assets ?? []
+      if (!assets.length) throw new Error('任务完成但没有返回图片')
+      const images = await Promise.all(assets.map((asset) => downloadAsset(asset, opts.signal)))
+      const actualParamsList = assets.map((asset) => asset.actualParams || view.job.actualParams)
+      return {
+        images,
+        cleanup: () => ackJob(jobId),
+        actualParams: {
+          ...(view.job.actualParams ?? actualParamsList[0] ?? {}),
+          n: images.length,
+        },
+        actualParamsList,
+      }
     }
+  } finally {
+    opts.signal?.removeEventListener('abort', cancelOnAbort)
   }
 }

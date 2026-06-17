@@ -82,31 +82,45 @@ func (r *Repository) Get(ctx context.Context, id string) (Job, error) {
 	return scanJob(row)
 }
 
-func (r *Repository) MarkRunning(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `
+func (r *Repository) MarkRunning(ctx context.Context, id string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE image_jobs
 		SET status = $2, stage = 'upstream', started_at = COALESCE(started_at, now())
-		WHERE id = $1 AND status IN ('queued','running')
+		WHERE id = $1 AND status = 'queued'
 	`, id, StatusRunning)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
-func (r *Repository) MarkDone(ctx context.Context, id string, assetIDs []string, actual map[string]any) error {
+func (r *Repository) MarkDone(ctx context.Context, id string, assetIDs []string, actual map[string]any) (bool, error) {
 	rawActual, err := json.Marshal(actual)
 	if err != nil {
-		return err
+		return false, err
 	}
 	args := []any{id, rawActual}
 	for _, assetID := range assetIDs {
 		args = append(args, assetID)
 	}
-	_, err = r.db.ExecContext(ctx, fmt.Sprintf(`
+	result, err := r.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE image_jobs
 		SET status = 'done', stage = 'done', result_asset_ids = %s, actual_params = $2, finished_at = now(),
 			api_key_ciphertext = NULL, api_key_nonce = NULL
-		WHERE id = $1
+		WHERE id = $1 AND status = 'running'
 	`, uuidArraySQL(assetIDs, 3)), args...)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 func (r *Repository) MarkError(ctx context.Context, id string, appErr *apperror.Error) error {
@@ -118,19 +132,26 @@ func (r *Repository) MarkError(ctx context.Context, id string, appErr *apperror.
 		UPDATE image_jobs
 		SET status = 'error', stage = 'error', error = $2, finished_at = now(),
 			api_key_ciphertext = NULL, api_key_nonce = NULL
-		WHERE id = $1
+		WHERE id = $1 AND status IN ('queued','running')
 	`, id, rawError)
 	return err
 }
 
-func (r *Repository) Cancel(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `
+func (r *Repository) Cancel(ctx context.Context, id string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE image_jobs
 		SET status = 'cancelled', stage = 'cancelled', cancelled_at = now(), finished_at = COALESCE(finished_at, now()),
 			api_key_ciphertext = NULL, api_key_nonce = NULL
 		WHERE id = $1 AND status IN ('queued','running')
 	`, id)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 func (r *Repository) Ack(ctx context.Context, id string) (Job, error) {

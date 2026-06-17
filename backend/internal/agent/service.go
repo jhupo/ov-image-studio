@@ -82,11 +82,28 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 	if err := s.queue.MarkCancelled(ctx, "agent_run", id, time.Hour); err != nil {
 		return err
 	}
-	return s.repo.Cancel(ctx, id)
+	cancelled, err := s.repo.Cancel(ctx, id)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return nil
+	}
+	if _, err := s.repo.Get(ctx, id); err != nil {
+		if err == sql.ErrNoRows {
+			return apperror.NotFound("Agent 任务不存在")
+		}
+		return err
+	}
+	return apperror.New(409, "agent_run_not_cancellable", "Agent 任务已结束，不能取消")
 }
 
 func (s *Service) Run(ctx context.Context, id string) {
 	if err := s.run(ctx, id); err != nil {
+		if s.isCancelled(context.Background(), id) {
+			_, _ = s.repo.Cancel(context.Background(), id)
+			return
+		}
 		_ = s.repo.MarkError(context.Background(), id, apperror.Normalize(err))
 	}
 }
@@ -96,24 +113,66 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if run.Status == StatusCancelled || s.queue.IsCancelled(ctx, "agent_run", id) {
-		return s.repo.Cancel(ctx, id)
-	}
-	if err := s.repo.MarkRunning(ctx, id); err != nil {
+	if run.Status == StatusCancelled || s.isCancelled(ctx, id) {
+		_, err := s.repo.Cancel(ctx, id)
 		return err
+	}
+	claimed, err := s.repo.MarkRunning(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return nil
 	}
 	apiKey, err := s.loadAPIKey(ctx, id)
 	if err != nil {
 		return err
 	}
-	response, err := s.sub2api.Responses(ctx, apiKey, request)
+	upstreamCtx, stopCancellationWatch := s.watchCancellation(ctx, id)
+	defer stopCancellationWatch()
+	response, err := s.sub2api.Responses(upstreamCtx, apiKey, request)
 	if err != nil {
 		return err
 	}
-	if s.queue.IsCancelled(ctx, "agent_run", id) {
-		return s.repo.Cancel(ctx, id)
+	if s.isCancelled(ctx, id) {
+		_, err := s.repo.Cancel(ctx, id)
+		return err
 	}
-	return s.repo.MarkDone(ctx, id, response)
+	_, err = s.repo.MarkDone(ctx, id, response)
+	return err
+}
+
+func (s *Service) isCancelled(ctx context.Context, id string) bool {
+	return s.queue != nil && s.queue.IsCancelled(ctx, "agent_run", id)
+}
+
+func (s *Service) watchCancellation(ctx context.Context, id string) (context.Context, func()) {
+	if s.queue == nil {
+		return ctx, func() {}
+	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-watchCtx.Done():
+				return
+			case <-ticker.C:
+				if s.isCancelled(context.Background(), id) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return watchCtx, func() {
+		close(done)
+		cancel()
+	}
 }
 
 func (s *Service) loadAPIKey(ctx context.Context, id string) (string, error) {

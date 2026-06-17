@@ -785,10 +785,10 @@ export default function InputBar() {
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
-  const streamConcurrentByN = activeProfile.provider === 'openai' && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
+  const streamConcurrentByN = false
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
-    : `OpenAI 最大请求数量为 ${outputImageLimit}`
+    : `单次最大请求数量为 ${outputImageLimit}`
   const displaySize = normalizeImageSize(params.size) || DEFAULT_PARAMS.size
 
   const qualityOptions = [
@@ -804,7 +804,6 @@ export default function InputBar() {
     if (open) transparentOutputHint.hide()
   }, [transparentOutputHint.hide])
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
-  const qualityHint = useHintTooltip({ enabled: () => settings.codexCli })
   const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
   const maskTargetImage = maskDraft
     ? inputImages.find((img) => img.id === maskDraft.targetImageId) ?? null
@@ -1918,30 +1917,15 @@ export default function InputBar() {
           {displaySize}
         </button>
       </label>
-      <label
-        className="relative flex flex-col gap-0.5"
-        onMouseEnter={qualityHint.show}
-        onMouseLeave={qualityHint.hide}
-        onTouchStart={qualityHint.startTouch}
-        onTouchEnd={qualityHint.clearTimer}
-        onTouchCancel={qualityHint.hide}
-        onClick={qualityHint.show}
-      >
+      <label className="relative flex flex-col gap-0.5">
         <span className="text-gray-400 dark:text-gray-500 ml-1">质量</span>
         <Select
-          value={settings.codexCli ? 'auto' : params.quality}
+          value={params.quality}
           onChange={(val) => {
-            if (!settings.codexCli) setParams({ quality: val as any })
+            setParams({ quality: val as any })
           }}
           options={qualityOptions}
-          disabled={settings.codexCli}
-          className={settings.codexCli
-            ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
-            : selectClass}
-        />
-        <ButtonTooltip
-          visible={settings.codexCli && qualityHint.visible}
-          text="Codex CLI 不支持质量参数"
+          className={selectClass}
         />
       </label>
       <label className="flex flex-col gap-0.5">

@@ -66,27 +66,41 @@ func (r *Repository) GetRequest(ctx context.Context, id string) (Run, map[string
 	return run, request, nil
 }
 
-func (r *Repository) MarkRunning(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `
+func (r *Repository) MarkRunning(ctx context.Context, id string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE agent_response_runs
 		SET status = $2, stage = 'upstream', started_at = COALESCE(started_at, now())
-		WHERE id = $1 AND status IN ('queued','running')
+		WHERE id = $1 AND status = 'queued'
 	`, id, StatusRunning)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
-func (r *Repository) MarkDone(ctx context.Context, id string, response map[string]any) error {
+func (r *Repository) MarkDone(ctx context.Context, id string, response map[string]any) (bool, error) {
 	rawResponse, err := json.Marshal(response)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE agent_response_runs
 		SET status = 'done', stage = 'done', response = $2, finished_at = now(),
 			api_key_ciphertext = NULL, api_key_nonce = NULL
-		WHERE id = $1
+		WHERE id = $1 AND status = 'running'
 	`, id, rawResponse)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 func (r *Repository) MarkError(ctx context.Context, id string, appErr *apperror.Error) error {
@@ -98,19 +112,26 @@ func (r *Repository) MarkError(ctx context.Context, id string, appErr *apperror.
 		UPDATE agent_response_runs
 		SET status = 'error', stage = 'error', error = $2, finished_at = now(),
 			api_key_ciphertext = NULL, api_key_nonce = NULL
-		WHERE id = $1
+		WHERE id = $1 AND status IN ('queued','running')
 	`, id, rawError)
 	return err
 }
 
-func (r *Repository) Cancel(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `
+func (r *Repository) Cancel(ctx context.Context, id string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE agent_response_runs
 		SET status = 'cancelled', stage = 'cancelled', cancelled_at = now(), finished_at = COALESCE(finished_at, now()),
 			api_key_ciphertext = NULL, api_key_nonce = NULL
 		WHERE id = $1 AND status IN ('queued','running')
 	`, id)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 func (r *Repository) RequeueUnfinished(ctx context.Context) ([]string, error) {

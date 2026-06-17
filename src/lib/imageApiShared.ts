@@ -16,7 +16,9 @@ export interface CallApiOptions {
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
   maskDataUrl?: string
+  signal?: AbortSignal
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
+  onImageJobCreated?: (task: { jobId: string }) => void
   onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void
 }
 

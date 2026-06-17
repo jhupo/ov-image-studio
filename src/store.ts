@@ -42,7 +42,7 @@ import {
   clearImages,
   storeImage,
 } from './lib/db'
-import { callImageApi } from './lib/api'
+import { callImageApi, normalizeImageRequestModel } from './lib/api'
 import { AGENT_USER_STOP_REASON, callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
@@ -76,6 +76,7 @@ const AGENT_INPUT_DRAFT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000
 const AGENT_ROUND_IMAGE_MENTION_RE = /@(?:第)?(\d+)轮图(\d+)/g
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const imageTaskControllers = new Map<string, AbortController>()
 const agentRoundControllers = new Map<string, AbortController>()
 let agentConversationPersistenceReady = false
 let agentConversationMigrationPending = false
@@ -117,18 +118,13 @@ function isErrorToastTitle(title: string): boolean {
 
 export type SettingsTab = 'general' | 'agent' | 'api' | 'data' | 'about'
 
-const TIMEOUT_STREAMING_HINT = '也可尝试打开「流式传输」，并提高「请求中间步骤图像数」来维持连接。'
-const TIMEOUT_PARTIAL_IMAGES_ZERO_HINT = '官方流式接口不发送心跳，当前「请求中间步骤图像数」为 0，连接可能因无数据传输而断开。建议提高到 2 或 3。'
-const TIMEOUT_PARTIAL_IMAGES_LOW_HINT = '也可尝试提高「请求中间步骤图像数」来维持连接，避免长时间无数据传输导致断开。'
+const TIMEOUT_BACKEND_QUEUE_HINT = '当前请求由后端队列轮询执行；如果长时间超时，请检查后端服务、Sub2API 上游连通性和反向代理超时配置。'
 
-type TimeoutStreamingHintProfile = Pick<ApiProfile, 'provider' | 'streamImages' | 'streamPartialImages'>
+type TimeoutStreamingHintProfile = Pick<ApiProfile, 'provider'>
 
 function getTimeoutStreamingHint(profile?: TimeoutStreamingHintProfile | null) {
   if (profile?.provider !== 'openai') return ''
-  const partialImages = profile.streamPartialImages ?? DEFAULT_SETTINGS.streamPartialImages ?? 0
-  if (profile.streamImages !== true) return TIMEOUT_STREAMING_HINT
-  if (partialImages === 0) return TIMEOUT_PARTIAL_IMAGES_ZERO_HINT
-  return partialImages < 3 ? TIMEOUT_PARTIAL_IMAGES_LOW_HINT : ''
+  return TIMEOUT_BACKEND_QUEUE_HINT
 }
 
 function createOpenAITimeoutError(timeoutSeconds: number, profile?: TimeoutStreamingHintProfile | null) {
@@ -1203,7 +1199,7 @@ export const useStore = create<AppState>()(
 
         state.setConfirmDialog({
           title: '配置不支持 Agent 模式',
-          message: `当前配置「${activeProfile.name}」所属的服务商暂不支持 Agent 模式。Agent 模式需要使用支持 Responses API 的 OpenAI 配置。\n\n请前往 API 配置页，切换或新建一个支持 Responses API 的配置。`,
+          message: `当前配置「${activeProfile.name}」不支持 Agent 模式。Agent 模式需要使用支持 Responses API 的文本模型。\n\n请前往 API 配置页，切换到 Responses 接口并填写文本模型。`,
           confirmText: '去设置',
           cancelText: '取消',
           action: () => {
@@ -1238,10 +1234,10 @@ export const useStore = create<AppState>()(
                   model: incoming.model ?? profile.model,
                   timeout: incoming.timeout ?? profile.timeout,
                   apiMode: incoming.apiMode === 'images' || incoming.apiMode === 'responses' ? incoming.apiMode : profile.apiMode,
-                  codexCli: incoming.codexCli ?? profile.codexCli,
-                  apiProxy: incoming.apiProxy ?? profile.apiProxy,
-                  streamImages: incoming.streamImages ?? profile.streamImages,
-                  streamPartialImages: incoming.streamPartialImages ?? profile.streamPartialImages,
+                  codexCli: false,
+                  apiProxy: false,
+                  streamImages: false,
+                  streamPartialImages: DEFAULT_SETTINGS.streamPartialImages,
                 }
               : profile,
           )
@@ -1732,10 +1728,42 @@ function clearOpenAIWatchdogTimer(taskId: string) {
   openAIWatchdogTimers.delete(taskId)
 }
 
+function clearAllTaskTimers() {
+  for (const timer of customRecoveryTimers.values()) clearTimeout(timer)
+  customRecoveryTimers.clear()
+  for (const timer of openAIWatchdogTimers.values()) clearTimeout(timer)
+  openAIWatchdogTimers.clear()
+}
+
+function abortAllRunningWork(reason = OPENAI_INTERRUPTED_ERROR) {
+  const error = new DOMException(reason, 'AbortError')
+  for (const controller of imageTaskControllers.values()) {
+    if (!controller.signal.aborted) controller.abort(error)
+  }
+  imageTaskControllers.clear()
+  for (const controller of agentRoundControllers.values()) {
+    if (!controller.signal.aborted) controller.abort(createAgentAbortError())
+  }
+  agentRoundControllers.clear()
+}
+
+function abortImageTask(taskId: string, reason = OPENAI_INTERRUPTED_ERROR) {
+  const controller = imageTaskControllers.get(taskId)
+  if (!controller || controller.signal.aborted) return
+  controller.abort(new DOMException(reason, 'AbortError'))
+}
+
+function finishImageTaskController(taskId: string, controller: AbortController) {
+  if (imageTaskControllers.get(taskId) === controller) {
+    imageTaskControllers.delete(taskId)
+  }
+}
+
 function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.now()) {
   const task = useStore.getState().tasks.find((item) => item.id === taskId)
   if (!task || !isRunningOpenAITask(task)) return false
 
+  abortImageTask(taskId, error)
   updateTaskInStore(taskId, {
     status: 'error',
     error,
@@ -1764,7 +1792,7 @@ function usesConcurrentOpenAIImageRequests(profile: ApiProfile, params: TaskPara
   const n = params.n > 0 ? params.n : 1
   if (profile.provider !== 'openai' || n <= 1) return false
   if (profile.apiMode === 'responses') return true
-  return profile.apiMode === 'images' && (profile.codexCli || profile.streamImages)
+  return false
 }
 
 export function taskHasOutputErrors(task: Pick<TaskRecord, 'outputErrors'>) {
@@ -1787,22 +1815,7 @@ export function taskMatchesSearchQuery(task: TaskRecord, query: string) {
 }
 
 export function showCodexCliPrompt(force = false, reason = '接口返回的提示词已被改写') {
-  const state = useStore.getState()
-  const settings = state.settings
-  const promptKey = getCodexCliPromptKey(settings)
-  if (!force && (settings.codexCli || state.dismissedCodexCliPrompts.includes(promptKey))) return
-
-  state.setConfirmDialog({
-    title: '检测到 Codex CLI API',
-    message: `${reason}，当前 API 来源很可能是 Codex CLI。\n\n是否开启 Codex CLI 兼容模式？开启后会禁用在此处无效的质量参数，并在 Images API 多图生成时使用并发请求，解决该 API 数量参数无效的问题。同时，提示词文本开头会加入简短的不改写要求，避免模型重写提示词，偏离原意。`,
-    confirmText: '开启',
-    action: () => {
-      const state = useStore.getState()
-      state.dismissCodexCliPrompt(promptKey)
-      state.setSettings({ codexCli: true })
-    },
-    cancelAction: () => useStore.getState().dismissCodexCliPrompt(promptKey),
-  })
+  return
 }
 
 function getCustomRecoveryProfile(settings: AppSettings, task: TaskRecord) {
@@ -1820,8 +1833,19 @@ export function getTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiP
   if (!task.apiProfileId) return null
 
   const byId = normalized.profiles.find((profile) => profile.id === task.apiProfileId)
-  if (byId && (!provider || byId.provider === provider)) return byId
+  if (byId && (!provider || byId.provider === provider)) {
+    return normalizeTaskImageProfile(byId, task)
+  }
   return null
+}
+
+function normalizeTaskImageProfile(profile: ApiProfile, task: Pick<TaskRecord, 'apiMode' | 'apiModel' | 'inputImageIds' | 'maskImageId'>): ApiProfile {
+  const apiMode = task.inputImageIds.length > 0 || task.maskImageId ? 'images' : task.apiMode ?? profile.apiMode
+  return {
+    ...profile,
+    apiMode,
+    model: normalizeImageRequestModel(apiMode, task.apiModel || profile.model),
+  }
 }
 
 function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile): AppSettings {
@@ -1833,8 +1857,8 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
     model: profile.model,
     timeout: profile.timeout,
     apiMode: profile.apiMode,
-    codexCli: profile.codexCli,
-    apiProxy: profile.apiProxy,
+    codexCli: false,
+    apiProxy: false,
     profiles: normalized.profiles.map((item) => item.id === profile.id ? profile : item),
     activeProfileId: profile.id,
   })
@@ -1871,31 +1895,28 @@ function getApiRequestNetworkErrorHint(
   err: unknown,
   createdAt: number,
   usesApiProxy: boolean,
-  profile?: Pick<ApiProfile, 'provider' | 'apiMode' | 'streamImages' | 'streamPartialImages'> | null,
+  profile?: Pick<ApiProfile, 'provider' | 'apiMode'> | null,
 ): string | null {
   if (!isApiRequestNetworkError(err)) return null
 
   const elapsedSeconds = Math.max(0, (Date.now() - createdAt) / 1000)
 
   if (elapsedSeconds <= 15) {
-    if (usesApiProxy) {
-      return '提示：请求立即失败，请检查 API 代理服务是否正常运行。'
-    }
     const unsupportedApiHint = profile?.provider === 'openai'
-      ? `\n· API 不支持 ${getApiModeApiName(profile.apiMode)}`
+      ? `\n· 当前上游不支持 ${getApiModeApiName(profile.apiMode)} 或模型不匹配`
       : ''
-    return `提示：请求立即失败，可能原因：\n· API 服务器不可达或地址有误，请检查 API URL 是否正确、服务是否正常运行${unsupportedApiHint}\n· 接口不支持浏览器跨域请求，可使用 Docker 部署版或本地运行版并配置 API 代理解决`
+    return `提示：请求立即失败，可能原因：\n· 后端服务、Sub2API 或上游接口不可达${unsupportedApiHint}\n· API Key 无权限、额度不足，或请求参数被上游拒绝`
   }
 
   if (elapsedSeconds >= 55 && elapsedSeconds <= 75) {
-    return `提示：请求等待约 60 秒后被断开，这通常是反向代理或 CDN 的默认超时，而非接口本身报错。可调大代理/上游超时时间，或降低图片尺寸/质量后重试。${getTimeoutStreamingHint(profile)}`
+    return `提示：请求等待约 60 秒后被断开，通常是后端、Sub2API、反向代理或 CDN 的超时限制。可检查后端日志和代理超时设置，或降低图片尺寸/质量后重试。${getTimeoutStreamingHint(profile)}`
   }
 
   if (elapsedSeconds >= 110 && elapsedSeconds <= 140) {
-    return `提示：请求等待约 120 秒后被断开，这通常是 Cloudflare 等 CDN/网关的超时限制，而非接口本身报错。如果使用 Cloudflare，可考虑升级套餐或使用不经过 CDN 的直连地址。${getTimeoutStreamingHint(profile)}`
+    return `提示：请求等待约 120 秒后被断开，这通常是 Cloudflare 等 CDN/网关的超时限制，而非上游已完成。前端会轮询后端任务，请检查后端日志、Sub2API 上游状态和代理超时配置。${getTimeoutStreamingHint(profile)}`
   }
 
-  return `提示：请求等待较长时间后被断开，通常是反向代理或网关的超时限制，而非接口本身报错。可检查代理超时设置，或降低图片尺寸/质量后重试。${getTimeoutStreamingHint(profile)}`
+  return `提示：请求等待较长时间后被断开，通常是后端任务、Sub2API 上游或网关超时。可检查后端日志、代理超时设置，或降低图片尺寸/质量后重试。${getTimeoutStreamingHint(profile)}`
 }
 
 function getRawErrorPayload(err: unknown): Pick<Partial<TaskRecord>, 'rawImageUrls' | 'rawResponsePayload'> {
@@ -2262,6 +2283,8 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   }
 
   const taskId = genId()
+  const requestApiMode: ApiMode = orderedInputImages.length > 0 || maskImageId ? 'images' : activeProfile.apiMode
+  const requestModel = normalizeImageRequestModel(requestApiMode, activeProfile.model)
   const task: TaskRecord = {
     id: taskId,
     prompt: prompt.trim(),
@@ -2269,8 +2292,8 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,
-    apiMode: activeProfile.apiMode,
-    apiModel: activeProfile.model,
+    apiMode: requestApiMode,
+    apiModel: requestModel,
     inputImageIds: orderedInputImages.map((i) => i.id),
     maskTargetImageId,
     maskImageId,
@@ -3000,7 +3023,7 @@ function createAgentContinuationInputItem(newImageRefs: string[], toolCallsUsed:
   ]
   if (newImageRefs.length > 0) {
     lines.push(
-      `The following image ref ids are now available for you to reference in subsequent image_generation prompts: ${newImageRefs.join(', ')}`,
+      `The following image ref ids are now available for you to reference in subsequent generate_image_batch prompts: ${newImageRefs.join(', ')}`,
     )
   }
   lines.push(
@@ -3370,7 +3393,14 @@ async function executeAgentRound(
       ? conversation.messages.find((message) => message.id === round.assistantMessageId) ?? null
       : conversation.messages.find((message) => message.roundId === roundId && message.role === 'assistant') ?? null
     const assistantMessageId = existingAssistantMessage?.id ?? genId()
-    const shouldStreamAssistantMessage = activeProfile.streamImages === true
+    const imageApiMode = 'images'
+    const imageModel = normalizeImageRequestModel(imageApiMode, activeProfile.model)
+    const imageProfile: ApiProfile = {
+      ...activeProfile,
+      apiMode: imageApiMode,
+      model: imageModel,
+    }
+    const shouldStreamAssistantMessage = false
     const streamingTaskIds: string[] = []
     const taskIdByToolCallId = new Map<string, string>()
 
@@ -3416,8 +3446,8 @@ async function executeAgentRound(
         apiProvider: activeProfile.provider,
         apiProfileId: activeProfile.id,
         apiProfileName: activeProfile.name,
-        apiMode: activeProfile.apiMode,
-        apiModel: activeProfile.model,
+        apiMode: imageApiMode,
+        apiModel: imageModel,
         inputImageIds,
         maskTargetImageId: options.maskTargetImageId !== undefined ? options.maskTargetImageId : round.maskTargetImageId ?? null,
         maskImageId: options.maskImageId !== undefined ? options.maskImageId : round.maskImageId ?? null,
@@ -3521,11 +3551,29 @@ async function executeAgentRound(
     let reachedToolLimit = false
     let pendingToolTextSeparator = false
 
+    const readReferenceImageDataUrls = async (imageIds: string[]) => {
+      const dataUrls: string[] = []
+      for (const imageId of imageIds) {
+        const dataUrl = await ensureImageCached(imageId)
+        if (!dataUrl) throw new Error('参考图已不存在')
+        dataUrls.push(dataUrl)
+      }
+      return dataUrls
+    }
+
+    const createCurrentRoundReferences = async () => {
+      const imageIds = uniqueIds(round.inputImageIds ?? [])
+      return {
+        dataUrls: await readReferenceImageDataUrls(imageIds),
+        imageIds,
+      }
+    }
+
     // Helper: resolve reference image ids to data URLs for batch image calls
     const resolveReferenceImages = async (referenceIds: string[]): Promise<{ dataUrls: string[]; imageIds: string[] }> => {
-      const dataUrls: string[] = []
       const imageIds: string[] = []
       for (const refId of referenceIds) {
+        let found = false
         // Resolve both generated image refs and current/user input refs from XML tags.
         const latestConv = useStore.getState().agentConversations.find((item) => item.id === conversationId)
         if (!latestConv) continue
@@ -3534,9 +3582,8 @@ async function executeAgentRound(
             const currentRefId = getAgentCurrentReferenceId(r, imgIdx)
             if (currentRefId === refId) {
               const imageId = r.inputImageIds[imgIdx]
-              const dataUrl = await ensureImageCached(imageId)
-              if (dataUrl) dataUrls.push(dataUrl)
               imageIds.push(imageId)
+              found = true
             }
           }
           const outputImages = collectAgentRoundOutputImageSlots(r, useStore.getState().tasks)
@@ -3545,14 +3592,15 @@ async function executeAgentRound(
             if (generatedRefId === refId) {
               const imageId = outputImages[imgIdx]
               if (!imageId) continue
-              const dataUrl = await ensureImageCached(imageId)
-              if (dataUrl) dataUrls.push(dataUrl)
               imageIds.push(imageId)
+              found = true
             }
           }
         }
+        if (!found) throw new Error(`参考图 ${refId} 不存在`)
       }
-      return { dataUrls, imageIds }
+      const uniqueImageIds = uniqueIds(imageIds)
+      return { dataUrls: await readReferenceImageDataUrls(uniqueImageIds), imageIds: uniqueImageIds }
     }
 
     // Helper: execute a generate_image_batch function call concurrently
@@ -3569,27 +3617,36 @@ async function executeAgentRound(
       const batchExecutionItems = []
       for (const item of batchItems) {
         const referenceIds = uniqueIds(extractAgentReferenceIds(item.prompt))
-        const references = await resolveReferenceImages(referenceIds)
+        const explicitReferences = await resolveReferenceImages(referenceIds)
+        const currentReferences = referenceIds.length === 0 ? await createCurrentRoundReferences() : { dataUrls: [], imageIds: [] }
+        const references = {
+          imageIds: uniqueIds([...explicitReferences.imageIds, ...currentReferences.imageIds]),
+          dataUrls: explicitReferences.dataUrls.length > 0 ? explicitReferences.dataUrls : currentReferences.dataUrls,
+        }
+        const taskMaskImageId = maskDataUrl && references.imageIds.some((id) => id === round.maskTargetImageId)
+          ? round.maskImageId ?? null
+          : null
         const batchToolCallId = genId()
         await ensureStreamingAgentTask(batchToolCallId, item.prompt, references.imageIds, {
           createdAt: Date.now(),
-          maskTargetImageId: null,
-          maskImageId: null,
+          maskTargetImageId: taskMaskImageId ? round.maskTargetImageId ?? null : null,
+          maskImageId: taskMaskImageId,
           ...(callId ? { agentBatchCallId: callId } : {}),
         })
-        batchExecutionItems.push({ item, batchToolCallId, references, referenceIds })
+        batchExecutionItems.push({ item, batchToolCallId, references, referenceIds, maskDataUrl: taskMaskImageId ? maskDataUrl : undefined })
       }
 
       // Fire all batch items concurrently after all cards are visible.
-      const batchPromises = batchExecutionItems.map(async ({ item, batchToolCallId, references, referenceIds }) => {
+      const batchPromises = batchExecutionItems.map(async ({ item, batchToolCallId, references, referenceIds, maskDataUrl }) => {
 
         const batchResult = await callBatchImageSingle({
-          profile: activeProfile,
+          profile: imageProfile,
           params,
           batchItemId: item.id,
           prompt: item.prompt,
           referenceImageDataUrls: references.dataUrls,
           referenceIds,
+          maskDataUrl,
           signal: controller.signal,
           onImageToolStarted: shouldStreamAssistantMessage
             ? async () => {
@@ -3619,6 +3676,7 @@ async function executeAgentRound(
         // If not streaming and we have an image, complete the pre-created task.
         if (batchResult.image && !shouldStreamAssistantMessage) {
           await completeAgentImageTask({ ...batchResult.image, toolCallId: batchToolCallId }, batchResult.rawResponsePayload)
+          await batchResult.cleanup?.()
         }
 
         return batchResult
@@ -3772,8 +3830,8 @@ async function executeAgentRound(
           apiProvider: activeProfile.provider,
           apiProfileId: activeProfile.id,
           apiProfileName: activeProfile.name,
-          apiMode: activeProfile.apiMode,
-          apiModel: activeProfile.model,
+          apiMode: imageApiMode,
+          apiModel: imageModel,
           inputImageIds: uniqueIds([...(round?.inputImageIds ?? []), ...promptRefs.imageIds]),
           maskTargetImageId: round?.maskTargetImageId ?? null,
           maskImageId: round?.maskImageId ?? null,
@@ -3797,6 +3855,10 @@ async function executeAgentRound(
         useStore.getState().setTasks([task, ...useStore.getState().tasks])
         attachTaskToAgentRound(task.id)
         await putTask(task)
+      }
+      for (const failure of result.imageFailures ?? []) {
+        await ensureStreamingAgentTask(failure.toolCallId)
+        failAgentImageTask(failure.toolCallId, failure.error, result.rawResponsePayload)
       }
 
       if (result.rawResponsePayload && streamingTaskIds.length > 0) {
@@ -3948,8 +4010,7 @@ async function executeAgentRound(
     }
 
     let message = err instanceof Error ? err.message : String(err)
-    const usesApiProxy = activeProfile.apiProxy ?? requestSettings.apiProxy
-    const networkErrorHint = getApiRequestNetworkErrorHint(err, startedAt, usesApiProxy, activeProfile)
+    const networkErrorHint = getApiRequestNetworkErrorHint(err, startedAt, false, activeProfile)
     if (networkErrorHint && !message.includes(IMAGE_FETCH_CORS_HINT)) {
       message += `\n${networkErrorHint}`
     }
@@ -4004,6 +4065,8 @@ async function executeTask(taskId: string) {
   const { settings } = useStore.getState()
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return
+  const controller = new AbortController()
+  imageTaskControllers.set(taskId, controller)
   const taskProfile = getTaskApiProfile(settings, task)
   if (!taskProfile && task.apiProfileId) {
     updateTaskInStore(taskId, {
@@ -4013,6 +4076,7 @@ async function executeTask(taskId: string) {
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
+    finishImageTaskController(taskId, controller)
     return
   }
   const activeProfile = taskProfile ?? getActiveApiProfile(settings)
@@ -4053,6 +4117,12 @@ async function executeTask(taskId: string) {
       params: task.params,
       inputImageDataUrls: inputDataUrls,
       maskDataUrl,
+      signal: controller.signal,
+      onImageJobCreated: ({ jobId }) => {
+        updateTaskInStore(taskId, {
+          imageJobId: jobId,
+        })
+      },
       onCustomTaskEnqueued: (request) => {
         customTaskInfo = request
         updateTaskInStore(taskId, {
@@ -4069,6 +4139,7 @@ async function executeTask(taskId: string) {
     const latestBeforeSuccess = useStore.getState().tasks.find((t) => t.id === taskId)
     if (!latestBeforeSuccess || latestBeforeSuccess.status !== 'running') {
       useStore.getState().setTaskStreamPreview(taskId)
+      await result.cleanup?.()
       return
     }
 
@@ -4089,18 +4160,6 @@ async function executeTask(taskId: string) {
       if (imgId && revisedPrompt && revisedPrompt.trim()) acc[imgId] = revisedPrompt
       return acc
     }, {}) : undefined
-    const promptWasRevised = shouldStoreRevisedPrompts && result.revisedPrompts?.some(
-      (revisedPrompt) => revisedPrompt?.trim() && revisedPrompt.trim() !== requestPrompt.trim(),
-    )
-    const hasRevisedPromptValue = shouldStoreRevisedPrompts && result.revisedPrompts?.some((revisedPrompt) => revisedPrompt?.trim())
-    if (taskProvider === 'openai' && activeProfile.apiMode === 'responses' && !activeProfile.codexCli) {
-      if (promptWasRevised) {
-        showCodexCliPrompt()
-      } else if (!hasRevisedPromptValue) {
-        showCodexCliPrompt(false, '接口没有返回官方 API 会返回的部分信息')
-      }
-    }
-
     // 更新任务
     const latestBeforeUpdate = useStore.getState().tasks.find((t) => t.id === taskId)
     if (!latestBeforeUpdate || latestBeforeUpdate.status !== 'running') {
@@ -4109,6 +4168,7 @@ async function executeTask(taskId: string) {
         ...outputIds,
         ...(transparentOriginalImageIds ?? []),
       ])
+      await result.cleanup?.()
       return
     }
     const partialImageIdsToClean = latestBeforeUpdate.streamPartialImageIds || []
@@ -4148,8 +4208,8 @@ async function executeTask(taskId: string) {
     }
   } catch (err) {
     clearOpenAIWatchdogTimer(taskId)
-    const latestTask = useStore.getState().tasks.find((t) => t.id === taskId) ?? task
-    if (latestTask.status !== 'running') return
+    const latestTask = useStore.getState().tasks.find((t) => t.id === taskId)
+    if (!latestTask || latestTask.status !== 'running') return
     useStore.getState().setTaskStreamPreview(taskId)
     const latestCustomTaskInfo = customTaskInfo ?? (latestTask.customTaskId ? { taskId: latestTask.customTaskId } : null)
     if (latestCustomTaskInfo && isRecoverableConnectionError(err)) {
@@ -4166,15 +4226,12 @@ async function executeTask(taskId: string) {
       let errorMessage = err instanceof Error ? err.message : String(err)
       const settings = useStore.getState().settings
       const profile = getTaskApiProfile(settings, latestTask)
-      const usesApiProxy = profile?.apiProxy ?? settings.apiProxy
       const activeProfile = getActiveApiProfile(settings)
       const hintProfile = profile ?? {
         provider: latestTask.apiProvider ?? activeProfile.provider,
         apiMode: settings.apiMode,
-        streamImages: activeProfile.streamImages,
-        streamPartialImages: activeProfile.streamPartialImages,
       }
-      const networkErrorHint = getApiRequestNetworkErrorHint(err, latestTask.createdAt, usesApiProxy, hintProfile)
+      const networkErrorHint = getApiRequestNetworkErrorHint(err, latestTask.createdAt, false, hintProfile)
       if (networkErrorHint && !errorMessage.includes(IMAGE_FETCH_CORS_HINT)) {
         errorMessage += `\n${networkErrorHint}`
       }
@@ -4189,6 +4246,7 @@ async function executeTask(taskId: string) {
       useStore.getState().setDetailTaskId(taskId)
     }
   } finally {
+    finishImageTaskController(taskId, controller)
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     for (const imgId of task.inputImageIds) {
       imageCache.delete(imgId)
@@ -4393,6 +4451,8 @@ export async function retryTask(task: TaskRecord) {
     ? createTransparentOutputMeta(task.prompt.trim())
     : null
   const taskId = genId()
+  const requestApiMode: ApiMode = task.inputImageIds.length > 0 || task.maskImageId ? 'images' : activeProfile.apiMode
+  const requestModel = normalizeImageRequestModel(requestApiMode, activeProfile.model)
   const newTask: TaskRecord = {
     id: taskId,
     prompt: task.prompt,
@@ -4400,8 +4460,8 @@ export async function retryTask(task: TaskRecord) {
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,
-    apiMode: activeProfile.apiMode,
-    apiModel: activeProfile.model,
+    apiMode: requestApiMode,
+    apiModel: requestModel,
     inputImageIds: [...task.inputImageIds],
     maskTargetImageId: task.maskTargetImageId ?? null,
     maskImageId: task.maskImageId ?? null,
@@ -4512,6 +4572,9 @@ export async function removeMultipleTasks(taskIds: string[]) {
 
   const toDelete = new Set(taskIds)
   const deletedTasks = tasks.filter(t => toDelete.has(t.id))
+  for (const task of deletedTasks) {
+    if (task.status === 'running') abortImageTask(task.id, AGENT_STOPPED_MESSAGE)
+  }
   const remaining = await scrubAgentOutputPayloadsForDeletedTasks(deletedTasks, tasks.filter(t => !toDelete.has(t.id)))
 
   // 收集所有被删除任务的关联图片
@@ -4583,6 +4646,7 @@ export async function clearFailedTasks(taskIds?: string[]) {
 /** 删除单条任务 */
 export async function removeTask(task: TaskRecord) {
   const { tasks, setTasks, inputImages, galleryInputDraft, showToast } = useStore.getState()
+  if (task.status === 'running') abortImageTask(task.id, AGENT_STOPPED_MESSAGE)
 
   // 收集此任务关联的图片
   const taskImageIds = new Set([
@@ -4630,6 +4694,8 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
   const { setTasks, clearInputImages, clearMaskDraft, setSettings, setParams, showToast } = useStore.getState()
 
   if (options.clearTasks) {
+    abortAllRunningWork(AGENT_STOPPED_MESSAGE)
+    clearAllTaskTimers()
     await dbClearTasks()
     await dbClearAgentConversations()
     await clearImages()

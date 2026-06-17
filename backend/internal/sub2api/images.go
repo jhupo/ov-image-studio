@@ -20,8 +20,12 @@ type ImageResult struct {
 }
 
 func ExtractImages(ctx context.Context, payload map[string]any, maxBytes int64) ([]ImageResult, error) {
+	return ExtractImagesWithFallback(ctx, payload, "", maxBytes)
+}
+
+func ExtractImagesWithFallback(ctx context.Context, payload map[string]any, fallbackMime string, maxBytes int64) ([]ImageResult, error) {
 	results := make([]ImageResult, 0)
-	mime := mimeFromPayload(payload)
+	mime := mimeFromPayload(payload, fallbackMime)
 	for _, item := range extractImageItems(payload) {
 		image, err := imageFromItem(ctx, item, mime, maxBytes)
 		if err != nil {
@@ -37,10 +41,55 @@ func ExtractImages(ctx context.Context, payload map[string]any, maxBytes int64) 
 		results = append(results, image)
 	}
 	if len(results) == 0 {
+		if appErr := imageGenerationFailureError(payload); appErr != nil {
+			return nil, appErr
+		}
 		raw, _ := json.Marshal(payload)
 		return nil, &apperror.Error{Code: "no_images_in_response", Message: "上游没有返回可识别的图片数据", Category: "upstream", HTTPStatus: http.StatusBadGateway, Raw: string(raw)}
 	}
 	return results, nil
+}
+
+func imageGenerationFailureError(payload map[string]any) *apperror.Error {
+	for _, item := range extractImageItems(payload) {
+		status, _ := item["status"].(string)
+		if status != "failed" && status != "error" {
+			continue
+		}
+		message := errorMessageFromValue(item["error"])
+		if message == "" {
+			message = errorMessageFromValue(item)
+		}
+		if message == "" {
+			message = "上游图片工具调用失败"
+		}
+		raw, _ := json.Marshal(payload)
+		return &apperror.Error{
+			Code:       "image_generation_failed",
+			Message:    message,
+			Category:   "upstream",
+			HTTPStatus: http.StatusBadGateway,
+			Raw:        string(raw),
+		}
+	}
+	return nil
+}
+
+func errorMessageFromValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		for _, key := range []string{"message", "detail", "code"} {
+			if text, ok := typed[key].(string); ok && strings.TrimSpace(text) != "" {
+				return strings.TrimSpace(text)
+			}
+		}
+		if nested := errorMessageFromValue(typed["error"]); nested != "" {
+			return nested
+		}
+	}
+	return ""
 }
 
 func extractImageItems(payload map[string]any) []map[string]any {
@@ -137,7 +186,10 @@ func downloadImageURL(ctx context.Context, imageURL string, maxBytes int64) ([]b
 	return raw, mime, nil
 }
 
-func mimeFromPayload(payload map[string]any) string {
+func mimeFromPayload(payload map[string]any, fallbackMime string) string {
+	if fallbackMime != "" {
+		return fallbackMime
+	}
 	if format, ok := payload["output_format"].(string); ok {
 		switch format {
 		case "jpeg", "jpg":

@@ -14,7 +14,6 @@ import type {
   ReferenceImageEditAction,
 } from '../types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, DEFAULT_ZIP_DOWNLOAD_ROUTES, ZIP_DOWNLOAD_ROUTE_VALUES } from '../types'
-import { shouldUseApiProxy } from './devProxy'
 import { readRuntimeEnv } from './runtimeEnv'
 import { isImportableConfigUrl } from './customProviderConfigUrl'
 
@@ -61,7 +60,7 @@ const DEFAULT_EDIT_FILES: CustomProviderFileMapping[] = [
 type ApiProfileProviderDraft = NonNullable<ApiProfile['providerDrafts']>[ApiProvider]
 
 function getDefaultStreamImages(provider: ApiProvider, apiMode: ApiMode): boolean {
-  return provider === 'openai' && apiMode === 'responses'
+  return false
 }
 
 export function normalizeStreamPartialImages(value: unknown, fallback: number | undefined = DEFAULT_STREAM_PARTIAL_IMAGES): number {
@@ -426,15 +425,12 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const rawProvider = typeof record.provider === 'string' ? record.provider : ''
   const removedProfile = isRemovedProviderText(rawProvider) || isRemovedProviderText(record.name) || isRemovedProviderText(record.baseUrl)
-  const provider: ApiProvider = customProviderIds.has(rawProvider) ? rawProvider : 'openai'
-  const apiMode: ApiMode = provider === 'openai' && record.apiMode === 'responses' ? 'responses' : 'images'
+  const provider: ApiProvider = 'openai'
+  const apiMode: ApiMode = record.apiMode === 'responses' ? 'responses' : 'images'
   const defaults = createDefaultOpenAIProfile({ ...fallback, apiMode })
   const rawBaseUrl = SAME_ORIGIN_API_URL_LOCKED
     ? DEFAULT_BASE_URL
     : removedProfile ? defaults.baseUrl : typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
-  const streamImages = provider === 'openai'
-    ? typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages
-    : false
 
   return {
     ...defaults,
@@ -446,12 +442,12 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     model: removedProfile ? defaults.model : typeof record.model === 'string' && record.model.trim() ? record.model : defaults.model,
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,
     apiMode,
-    codexCli: Boolean(record.codexCli),
-    apiProxy: typeof record.apiProxy === 'boolean' ? record.apiProxy : defaults.apiProxy,
-    responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
-    streamImages,
-    streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
-    providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds),
+    codexCli: false,
+    apiProxy: false,
+    responseFormatB64Json: undefined,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    providerDrafts: undefined,
   }
 }
 
@@ -470,7 +466,7 @@ function validateImportedProfileRecord(input: unknown) {
 
 export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSettings {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
-  const customProviders = normalizeCustomProviderDefinitions(record.customProviders)
+  const customProviders: CustomProviderDefinition[] = []
   const customProviderIds = new Set(customProviders.map((provider) => provider.id))
   const embeddedApiKeyId = typeof record.embeddedApiKeyId === 'number' && Number.isFinite(record.embeddedApiKeyId)
     ? record.embeddedApiKeyId
@@ -482,11 +478,11 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     model: typeof record.model === 'string' && record.model.trim() ? record.model : DEFAULT_IMAGES_MODEL,
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : DEFAULT_API_TIMEOUT,
     apiMode: legacyApiMode,
-    codexCli: Boolean(record.codexCli),
-    apiProxy: typeof record.apiProxy === 'boolean' ? record.apiProxy : DEFAULT_OPENAI_API_PROXY,
-    responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
-    streamImages: typeof record.streamImages === 'boolean' ? record.streamImages : undefined,
-    streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages),
+    codexCli: false,
+    apiProxy: false,
+    responseFormatB64Json: undefined,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
   })
   const profiles = Array.isArray(record.profiles) && record.profiles.length
     ? record.profiles.map((profile) => normalizeApiProfile(profile, undefined, customProviderIds))
@@ -507,7 +503,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     streamImages: active.streamImages,
     streamPartialImages: active.streamPartialImages,
     customProviders,
-    providerOrder: Array.isArray(record.providerOrder) ? record.providerOrder.map(String).filter((provider) => !isRemovedProviderText(provider)) : undefined,
+    providerOrder: undefined,
     clearInputAfterSubmit: typeof record.clearInputAfterSubmit === 'boolean' ? record.clearInputAfterSubmit : false,
     persistInputOnRestart: typeof record.persistInputOnRestart === 'boolean' ? record.persistInputOnRestart : true,
     reuseTaskApiProfileTemporarily: typeof record.reuseTaskApiProfileTemporarily === 'boolean' ? record.reuseTaskApiProfileTemporarily : false,
@@ -537,7 +533,7 @@ export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, pr
 }
 
 export function isOpenAICompatibleProvider(settings: Partial<AppSettings> | unknown, provider: ApiProvider): boolean {
-  return provider === 'openai' || Boolean(getCustomProviderDefinition(settings, provider))
+  return provider === 'openai'
 }
 
 export interface ImportedProviderSettings {
@@ -615,16 +611,16 @@ export function getActiveApiProfile(settings: Partial<AppSettings> | unknown): A
     model: typeof record.model === 'string' && record.model.trim() ? record.model : profile.model,
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : profile.timeout,
     apiMode,
-    codexCli: typeof record.codexCli === 'boolean' ? record.codexCli : profile.codexCli,
-    apiProxy: typeof record.apiProxy === 'boolean' ? record.apiProxy : profile.apiProxy,
-    streamImages: profile.provider === 'openai' && typeof record.streamImages === 'boolean' ? record.streamImages : profile.streamImages,
-    streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, profile.streamPartialImages),
+    codexCli: false,
+    apiProxy: false,
+    responseFormatB64Json: undefined,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
   }
 }
 
 export function validateApiProfile(profile: ApiProfile): string | null {
   if (!profile.name.trim()) return '缺少名称'
-  if (!profile.baseUrl.trim() && !shouldUseApiProxy(profile.apiProxy)) return '缺少 API URL'
   if (!profile.apiKey.trim()) return '缺少 API Key'
   if (!profile.model.trim()) return '缺少模型 ID'
   return null
