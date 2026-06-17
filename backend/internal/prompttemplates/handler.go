@@ -35,6 +35,9 @@ func (h *Handler) handleTemplates(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, result)
+	case http.MethodHead:
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
 	case http.MethodPost:
 		if r.URL.Query().Get("sync") != "1" {
 			httpserver.WriteError(w, apperror.NotFound("not found"))
