@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ov-image-studio-v0.6.7'
+const CACHE_NAME = 'ov-image-studio-v0.6.8'
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './pwa-icon.svg']
 
 self.addEventListener('install', (event) => {

@@ -26,6 +26,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 func (h *Handler) handleTemplates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		w.Header().Set("Cache-Control", "no-store")
 		page := queryInt(r, "page", 1)
 		pageSize := queryInt(r, "page_size", queryInt(r, "pageSize", 24))
 		result, err := h.service.List(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("category"), queryIDs(r), page, pageSize)

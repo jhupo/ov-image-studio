@@ -16,6 +16,7 @@ const FAVORITES_STORAGE_KEY = 'ov-image-studio.promptTemplateFavorites'
 const RECENT_STORAGE_KEY = 'ov-image-studio.promptTemplateRecent'
 const MAX_RECENT_TEMPLATES = 12
 const PAGE_SIZE = 24
+const TEMPLATE_IMAGE_FALLBACK = '提示词模板'
 
 function readStoredIds(key: string) {
   try {
@@ -24,6 +25,26 @@ function readStoredIds(key: string) {
   } catch {
     return []
   }
+}
+
+function TemplateImage({ template, index = 0, className }: { template: PromptTemplate; index?: number; className: string }) {
+  const [failed, setFailed] = useState(false)
+  const imageUrl = promptTemplateImageURL(template, index)
+  const title = template.title || TEMPLATE_IMAGE_FALLBACK
+
+  useEffect(() => {
+    setFailed(false)
+  }, [imageUrl])
+
+  if (!imageUrl || failed) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-gray-100 px-8 text-center text-sm font-semibold text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+        {title}
+      </div>
+    )
+  }
+
+  return <img src={imageUrl} alt={title} loading="lazy" className={className} onError={() => setFailed(true)} />
 }
 
 export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalProps) {
@@ -39,6 +60,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [preview, setPreview] = useState<PromptTemplate | null>(null)
+  const [previewImageIndex, setPreviewImageIndex] = useState(0)
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => readStoredIds(FAVORITES_STORAGE_KEY))
   const [recentIds, setRecentIds] = useState<string[]>(() => readStoredIds(RECENT_STORAGE_KEY))
 
@@ -142,6 +164,11 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
     })
   }
 
+  const openPreview = (template: PromptTemplate) => {
+    setPreviewImageIndex(0)
+    setPreview(template)
+  }
+
   const categoryLabel = (category: string) => {
     if (category === ALL_CATEGORY) return '全部'
     if (category === FAVORITES_CATEGORY) return '收藏'
@@ -156,18 +183,6 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
     } catch (err) {
       showToast(getClipboardFailureMessage('复制失败', err), 'error')
     }
-  }
-
-  const renderImage = (template: PromptTemplate, className: string) => {
-    const imageUrl = promptTemplateImageURL(template)
-    if (!imageUrl) {
-      return (
-        <div className="flex h-full w-full items-center justify-center bg-gray-100 px-8 text-center text-sm font-semibold text-gray-500 dark:bg-gray-900 dark:text-gray-400">
-          {template.title || 'GPT Image 2'}
-        </div>
-      )
-    }
-    return <img src={imageUrl} alt={template.title} loading="lazy" className={className} />
   }
 
   const modal = (
@@ -230,9 +245,14 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 {visibleTemplates.map((template) => (
                   <article key={template.id} className="group overflow-hidden rounded-lg border border-gray-200/70 bg-white/80 transition hover:border-blue-400/70 dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-blue-500/45">
                     <div className="relative aspect-[16/10] w-full overflow-hidden bg-gray-100 dark:bg-gray-900">
-                      <button type="button" onClick={() => setPreview(template)} className="block h-full w-full text-left">
-                        {renderImage(template, 'h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]')}
+                      <button type="button" onClick={() => openPreview(template)} className="block h-full w-full text-left">
+                        <TemplateImage template={template} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
                       </button>
+                      {template.imageUrls.length > 1 && (
+                        <span className="absolute bottom-2 left-2 rounded bg-black/55 px-2 py-1 text-xs font-semibold text-white backdrop-blur">
+                          {template.imageUrls.length} 张图
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={() => toggleFavorite(template)}
@@ -245,10 +265,10 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                       </button>
                     </div>
                     <div className="space-y-3 p-3">
-                      <button type="button" onClick={() => setPreview(template)} className="line-clamp-1 text-left text-base font-bold text-gray-900 dark:text-gray-100" title={template.title}>
-                        {template.title}
+                      <button type="button" onClick={() => openPreview(template)} className="line-clamp-1 text-left text-base font-bold text-gray-900 dark:text-gray-100" title={template.title || TEMPLATE_IMAGE_FALLBACK}>
+                        {template.title || TEMPLATE_IMAGE_FALLBACK}
                       </button>
-                      <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-gray-600 dark:text-gray-300">{template.summary}</p>
+                      <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-gray-600 dark:text-gray-300">{template.summary || '暂无描述'}</p>
                       <div className="flex flex-wrap gap-1">
                         {template.tags.slice(0, 3).map((tag) => (
                           <span key={tag} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
@@ -304,7 +324,26 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex min-h-[280px] items-center justify-center bg-gray-100 dark:bg-black lg:min-h-[620px]">
-                {renderImage(preview, 'max-h-[72vh] w-full object-contain')}
+                <div className="flex h-full w-full flex-col">
+                  <div className="min-h-0 flex-1">
+                    <TemplateImage template={preview} index={previewImageIndex} className="h-full max-h-[72vh] w-full object-contain" />
+                  </div>
+                  {preview.imageUrls.length > 1 && (
+                    <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-white/10 bg-black/70 p-3 custom-scrollbar">
+                      {preview.imageUrls.map((_, index) => (
+                        <button
+                          key={`${preview.id}-${index}`}
+                          type="button"
+                          onClick={() => setPreviewImageIndex(index)}
+                          className={`h-16 w-24 shrink-0 overflow-hidden rounded border transition ${previewImageIndex === index ? 'border-blue-400' : 'border-white/20 opacity-70 hover:opacity-100'}`}
+                          aria-label={`查看第 ${index + 1} 张参考图`}
+                        >
+                          <TemplateImage template={preview} index={index} className="h-full w-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <aside className="flex min-h-0 flex-col border-t border-gray-200/70 bg-white dark:border-white/[0.08] dark:bg-gray-950 lg:border-l lg:border-t-0">
@@ -314,7 +353,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                       <span className="rounded bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300">{getPromptCategoryLabel(preview.category)}</span>
                       {preview.author && <span className="text-xs text-gray-500">{preview.author}</span>}
                     </div>
-                    <h4 className="text-lg font-bold leading-snug text-gray-900 dark:text-gray-100">{preview.title}</h4>
+                    <h4 className="text-lg font-bold leading-snug text-gray-900 dark:text-gray-100">{preview.title || TEMPLATE_IMAGE_FALLBACK}</h4>
                   </div>
                   <button
                     onClick={() => setPreview(null)}
@@ -330,7 +369,7 @@ export default function PromptTemplatesModal({ onClose }: PromptTemplatesModalPr
                 <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 custom-scrollbar">
                   <section>
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">效果说明</div>
-                    <p className="text-sm leading-6 text-gray-600 dark:text-gray-300">{preview.summary}</p>
+                    <p className="text-sm leading-6 text-gray-600 dark:text-gray-300">{preview.summary || '暂无描述'}</p>
                   </section>
                   <section>
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">标签</div>

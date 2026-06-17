@@ -111,7 +111,7 @@ export async function fetchPromptTemplates(options: FetchPromptTemplatesOptions 
     if (id.trim()) params.append('ids', id.trim())
   }
 
-  const response = await fetch(`/api/prompt-templates?${params.toString()}`)
+  const response = await fetch(`/api/prompt-templates?${params.toString()}`, { cache: 'no-store' })
   if (!response.ok) {
     throw new Error(`模板加载失败: HTTP ${response.status}`)
   }
