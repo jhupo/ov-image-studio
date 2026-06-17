@@ -62,7 +62,7 @@ func (h *Handler) handleTemplate(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteJSON(w, http.StatusOK, status)
 		return
 	}
-	if len(parts) == 3 && parts[1] == "images" && r.Method == http.MethodGet {
+	if len(parts) == 3 && parts[1] == "images" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		index, err := strconv.Atoi(parts[2])
 		if err != nil {
 			httpserver.WriteError(w, apperror.BadRequest("图片序号无效"))
@@ -89,7 +89,9 @@ func (h *Handler) handleTemplate(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Cache-Control", "public, max-age=86400")
-		_, _ = w.Write(body)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write(body)
+		}
 		return
 	}
 	httpserver.WriteError(w, apperror.NotFound("not found"))
