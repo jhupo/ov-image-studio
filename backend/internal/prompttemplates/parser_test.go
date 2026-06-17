@@ -1,6 +1,9 @@
 package prompttemplates
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseReadmeExtractsPromptAndImages(t *testing.T) {
 	markdown := `## 🔥 精选提示词
@@ -46,6 +49,9 @@ Create a clean exploded-view poster.
 	}
 	if template.ImageURLs[0] != "https://cms-assets.youmind.com/image-1.png" {
 		t.Fatalf("unexpected first image URL: %s", template.ImageURLs[0])
+	}
+	if strings.ContainsAny(template.ID, "/: ") {
+		t.Fatalf("id is not URL path safe: %s", template.ID)
 	}
 }
 

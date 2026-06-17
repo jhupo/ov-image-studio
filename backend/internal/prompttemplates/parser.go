@@ -148,7 +148,25 @@ func isFeatured(markdown string, start int) bool {
 
 func stableID(no string, title string) string {
 	sum := sha1.Sum([]byte(no + ":" + title))
-	return "awesome-gpt-image-2-" + no + "-" + hex.EncodeToString(sum[:])[:10]
+	return "awesome-gpt-image-2-" + sanitizeIDPart(no) + "-" + hex.EncodeToString(sum[:])[:10]
+}
+
+func sanitizeIDPart(value string) string {
+	var builder strings.Builder
+	builder.Grow(len(value))
+	lastDash := false
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }
 
 func detectCategory(title string, featured bool) string {
