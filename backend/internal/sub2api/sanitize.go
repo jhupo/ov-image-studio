@@ -21,6 +21,10 @@ func sanitizeImageURLsForKey(key string, value any) any {
 		for index, childValue := range typed {
 			typed[index] = sanitizeImageURLsForKey(key, childValue)
 		}
+	case []map[string]any:
+		for index, childValue := range typed {
+			typed[index] = sanitizeImageURLsForKey("", childValue).(map[string]any)
+		}
 	case []string:
 		for index, childValue := range typed {
 			typed[index] = sanitizeImageURLsForKey(key, childValue).(string)

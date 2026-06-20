@@ -16,6 +16,29 @@ func preview(value string) string {
 
 func TestSanitizeImageURLsNormalizesOctetStreamDataURL(t *testing.T) {
 	body := map[string]any{
+		"input": []map[string]any{
+			map[string]any{
+				"content": []any{
+					map[string]any{
+						"type":      "input_image",
+						"image_url": "data:application/octet-stream;base64," + tinyPNGBase64,
+					},
+				},
+			},
+		},
+	}
+
+	sanitizeImageURLs(body)
+
+	content := body["input"].([]map[string]any)[0]["content"].([]any)[0].(map[string]any)
+	imageURL := content["image_url"].(string)
+	if !strings.HasPrefix(imageURL, "data:image/png;base64,") {
+		t.Fatalf("expected image/png data URL, got %q", preview(imageURL))
+	}
+}
+
+func TestSanitizeImageURLsNormalizesNestedAnyDataURL(t *testing.T) {
+	body := map[string]any{
 		"input": []any{
 			map[string]any{
 				"content": []any{
