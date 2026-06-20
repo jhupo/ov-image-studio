@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
 	"strings"
@@ -47,7 +49,12 @@ func (c *Client) ImagesEdit(ctx context.Context, apiKey string, fields map[strin
 		_ = writer.WriteField(key, value)
 	}
 	for _, file := range files {
-		part, err := writer.CreateFormFile(file.Field, file.Name)
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, escapeMultipartValue(file.Field), escapeMultipartValue(file.Name)))
+		if file.MIME != "" {
+			header.Set("Content-Type", file.MIME)
+		}
+		part, err := writer.CreatePart(header)
 		if err != nil {
 			return nil, err
 		}
@@ -64,7 +71,12 @@ func (c *Client) ImagesEdit(ctx context.Context, apiKey string, fields map[strin
 type MultipartFile struct {
 	Field string
 	Name  string
+	MIME  string
 	Data  []byte
+}
+
+func escapeMultipartValue(value string) string {
+	return strings.NewReplacer("\\", "\\\\", `"`, "\\\"").Replace(value)
 }
 
 func (c *Client) postJSON(ctx context.Context, apiKey string, requestPath string, body map[string]any) (map[string]any, error) {

@@ -461,18 +461,24 @@ func (s *Service) callImageEdit(ctx context.Context, job Job, apiKey string) (ma
 		if err != nil {
 			return nil, err
 		}
-		name := "input-" + strconv.Itoa(index+1) + extensionForMIME(asset.MIME)
+		mime := assets.SniffMIME(data, asset.MIME)
+		if !assets.IsImageMIME(mime) {
+			return nil, apperror.BadRequest("参考图必须是 PNG、JPEG、WebP 或 GIF 图片")
+		}
+		name := "input-" + strconv.Itoa(index+1) + extensionForMIME(mime)
 		if job.MaskAssetID != nil && index == 0 {
 			converted, err := encodeImagePNG(data)
 			if err != nil {
 				return nil, apperror.BadRequest("遮罩编辑的主图必须是可解码的 PNG 或 JPEG，请先转换为 PNG 后再提交")
 			}
 			data = converted
+			mime = "image/png"
 			name = "input-" + strconv.Itoa(index+1) + ".png"
 		}
 		files = append(files, sub2api.MultipartFile{
 			Field: "image[]",
 			Name:  name,
+			MIME:  mime,
 			Data:  data,
 		})
 	}
@@ -493,6 +499,7 @@ func (s *Service) callImageEdit(ctx context.Context, job Job, apiKey string) (ma
 		files = append(files, sub2api.MultipartFile{
 			Field: "mask",
 			Name:  "mask.png",
+			MIME:  "image/png",
 			Data:  data,
 		})
 	}
