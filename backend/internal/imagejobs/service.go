@@ -430,8 +430,9 @@ func (s *Service) assetDataURL(ctx context.Context, assetID string) (string, err
 		return "", err
 	}
 	mime := strings.TrimSpace(strings.Split(asset.MIME, ";")[0])
-	if mime == "" {
-		mime = "image/png"
+	mime = assets.SniffMIME(data, mime)
+	if !assets.IsImageMIME(mime) {
+		return "", apperror.BadRequest("参考图必须是 PNG、JPEG、WebP 或 GIF 图片")
 	}
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }

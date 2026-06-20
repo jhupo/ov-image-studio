@@ -38,6 +38,9 @@ func (s *Service) CreateFromBase64(ctx context.Context, req UploadRequest) (Asse
 		return Asset{}, apperror.New(413, "asset_too_large", "图片文件过大")
 	}
 	mime := SniffMIME(raw, req.MIME)
+	if !IsImageMIME(mime) {
+		return Asset{}, apperror.BadRequest("上传文件必须是 PNG、JPEG、WebP 或 GIF 图片")
+	}
 	return s.repo.Create(ctx, CreateAssetParams{
 		Kind:      kind,
 		MIME:      mime,
@@ -51,6 +54,9 @@ func (s *Service) CreateOutput(ctx context.Context, mime string, data []byte, jo
 		return Asset{}, apperror.New(502, "upstream_result_too_large", "上游返回图片过大")
 	}
 	mime = SniffMIME(data, mime)
+	if !IsImageMIME(mime) {
+		return Asset{}, apperror.BadRequest("上游返回了无法识别的图片格式")
+	}
 	return s.repo.Create(ctx, CreateAssetParams{
 		Kind:        "output",
 		MIME:        mime,

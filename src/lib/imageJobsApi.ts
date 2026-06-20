@@ -1,6 +1,6 @@
 import type { ApiProfile, TaskParams } from '../types'
 import type { CallApiResult } from './imageApiShared'
-import { getApiErrorMessage } from './imageApiShared'
+import { getApiErrorMessage, isImageMime, sniffImageMime } from './imageApiShared'
 import { imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 
 interface ImageJobAsset {
@@ -77,7 +77,8 @@ function dataUrlToBase64(dataUrl: string) {
 
 function dataUrlMime(dataUrl: string) {
   const match = dataUrl.match(/^data:([^;,]+)[;,]/)
-  return match?.[1] || 'image/png'
+  const mime = match?.[1]?.trim().toLowerCase()
+  return mime && isImageMime(mime) ? mime : 'image/png'
 }
 
 async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
@@ -86,7 +87,7 @@ async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> 
   for (let i = 0; i < bytes.length; i += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
   }
-  return `data:${blob.type || fallbackMime};base64,${btoa(binary)}`
+  return `data:${sniffImageMime(bytes, blob.type || fallbackMime)};base64,${btoa(binary)}`
 }
 
 async function pngBlobToDataUrl(blob: Blob): Promise<string> {
