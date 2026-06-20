@@ -18,6 +18,7 @@ import {
   mergeActualParams,
   MIME_MAP,
   normalizeBase64Image,
+  normalizeImageDataUrlMime,
   pickActualParams,
 } from './imageApiShared'
 
@@ -1048,6 +1049,8 @@ async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile):
 
 async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const { prompt, params, inputImageDataUrls } = opts
+  const normalizedInputImageDataUrls = inputImageDataUrls.map(normalizeImageDataUrlMime)
+  const normalizedMaskDataUrl = opts.maskDataUrl ? normalizeImageDataUrlMime(opts.maskDataUrl) : undefined
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -1056,19 +1059,19 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
   const timeoutId = setTimeout(() => abortController(controller, createApiTimeoutError(profile.timeout)), profile.timeout * 1000)
 
   try {
-    if (opts.maskDataUrl) {
-      assertMaskEditFileSize('遮罩主图文件', getDataUrlDecodedByteSize(inputImageDataUrls[0] ?? ''))
-      assertMaskEditFileSize('遮罩文件', getDataUrlDecodedByteSize(opts.maskDataUrl))
+    if (normalizedMaskDataUrl) {
+      assertMaskEditFileSize('遮罩主图文件', getDataUrlDecodedByteSize(normalizedInputImageDataUrls[0] ?? ''))
+      assertMaskEditFileSize('遮罩文件', getDataUrlDecodedByteSize(normalizedMaskDataUrl))
     }
     assertImageInputPayloadSize(
-      inputImageDataUrls.reduce((sum, dataUrl) => sum + getDataUrlEncodedByteSize(dataUrl), 0) +
-        (opts.maskDataUrl ? getDataUrlEncodedByteSize(opts.maskDataUrl) : 0),
+      normalizedInputImageDataUrls.reduce((sum, dataUrl) => sum + getDataUrlEncodedByteSize(dataUrl), 0) +
+        (normalizedMaskDataUrl ? getDataUrlEncodedByteSize(normalizedMaskDataUrl) : 0),
     )
 
     const body: Record<string, unknown> = {
       model: profile.model,
-      input: createResponsesInput(prompt, inputImageDataUrls),
-      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl)],
+      input: createResponsesInput(prompt, normalizedInputImageDataUrls),
+      tools: [createResponsesImageTool(params, normalizedInputImageDataUrls.length > 0, profile, normalizedMaskDataUrl)],
       tool_choice: 'required',
     }
     if (profile.streamImages) {

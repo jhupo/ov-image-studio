@@ -46,7 +46,7 @@ import { callImageApi, normalizeImageRequestModel } from './lib/api'
 import { AGENT_USER_STOP_REASON, callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
-import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { IMAGE_FETCH_CORS_HINT, normalizeImageDataUrlMime } from './lib/imageApiShared'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
@@ -176,11 +176,15 @@ function cacheThumbnail(id: string, thumbnail: { dataUrl: string; width?: number
 
 export async function ensureImageCached(id: string): Promise<string | undefined> {
   const cached = getCachedImage(id)
-  if (cached) return cached
+  if (cached) return normalizeImageDataUrlMime(cached)
   const rec = await getImage(id)
   if (rec) {
-    cacheImage(id, rec.dataUrl)
-    return rec.dataUrl
+    const dataUrl = normalizeImageDataUrlMime(rec.dataUrl)
+    cacheImage(id, dataUrl)
+    if (dataUrl !== rec.dataUrl) {
+      await putImage({ ...rec, dataUrl })
+    }
+    return dataUrl
   }
   return undefined
 }

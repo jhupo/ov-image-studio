@@ -48,7 +48,7 @@ export function isDataUrl(value: unknown): value is string {
 }
 
 export function normalizeBase64Image(value: string, fallbackMime: string): string {
-  return value.startsWith('data:') ? value : `data:${fallbackMime};base64,${value}`
+  return value.startsWith('data:') ? normalizeImageDataUrlMime(value) : `data:${fallbackMime};base64,${value}`
 }
 
 export function isImageMime(mime: string): boolean {
@@ -74,6 +74,35 @@ export function sniffImageMime(bytes: Uint8Array, fallbackMime: string): string 
     return 'image/gif'
   }
   return isImageMime(fallbackMime) ? fallbackMime : 'image/png'
+}
+
+function base64HeaderToBytes(base64: string): Uint8Array {
+  const normalized = base64.replace(/\s/g, '').slice(0, 64)
+  const length = normalized.length - (normalized.length % 4)
+  if (length < 4) return new Uint8Array()
+  const binary = atob(normalized.slice(0, length))
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+export function normalizeImageDataUrlMime(dataUrl: string): string {
+  const match = dataUrl.match(/^data:([^;,]*)([^,]*),([\s\S]*)$/i)
+  if (!match) return dataUrl
+
+  const mime = match[1]?.trim().toLowerCase() ?? ''
+  const suffix = match[2] || ''
+  const payload = match[3] || ''
+  if (isImageMime(mime)) return dataUrl
+  if (!/;base64/i.test(suffix)) return dataUrl
+
+  try {
+    const bytes = base64HeaderToBytes(payload)
+    if (bytes.length === 0) return dataUrl
+    return `data:${sniffImageMime(bytes, mime || 'image/png')};base64,${payload}`
+  } catch {
+    return dataUrl
+  }
 }
 
 function formatMiB(bytes: number): string {
@@ -163,7 +192,7 @@ async function probeNoCorsReachability(url: string, timeoutMs = 8000): Promise<'
 }
 
 export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, signal?: AbortSignal): Promise<string> {
-  if (isDataUrl(url)) return url
+  if (isDataUrl(url)) return normalizeImageDataUrlMime(url)
 
   let response: Response
   try {

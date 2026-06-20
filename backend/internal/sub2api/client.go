@@ -68,6 +68,7 @@ type MultipartFile struct {
 }
 
 func (c *Client) postJSON(ctx context.Context, apiKey string, requestPath string, body map[string]any) (map[string]any, error) {
+	sanitizeImageURLs(body)
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
